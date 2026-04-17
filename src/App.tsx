@@ -346,21 +346,33 @@ function SystemView({ state, apiCall }: { state: SystemState; apiCall: (e: strin
                 <Droplet className="w-5 h-5 text-slate-400" /> Valf Dolum Süreleri (sn)
               </h3>
               <div className="grid grid-cols-5 gap-2">
-                {state.config.valveFillTimes.map((time, idx) => (
-                  <div key={idx} className="flex flex-col items-center bg-gray-50 p-2 rounded-xl border border-gray-200">
-                    <span className="text-[10px] text-slate-400 font-semibold mb-1">V{idx + 1}</span>
-                    <input
-                      type="number" min={0.5} max={30} step={0.5}
-                      value={time} disabled={state.systemRunning}
-                      onChange={(e) => {
-                        const t = [...state.config.valveFillTimes];
-                        t[idx] = parseFloat(e.target.value) || 1;
-                        apiCall('/api/config', { valveFillTimes: t });
-                      }}
-                      className="w-full bg-white text-center text-sm font-mono text-cyan-700 border border-gray-300 rounded-lg p-1.5 focus:outline-none focus:border-cyan-400 disabled:opacity-50 min-h-[40px]"
-                    />
-                  </div>
-                ))}
+                {state.config.valveFillTimes.map((time, idx) => {
+                  const isActive = state.config.activeValves ? state.config.activeValves[idx] : true;
+                  return (
+                    <div key={idx} className={`flex flex-col items-center p-2 rounded-xl border transition-colors ${isActive ? 'bg-gray-50 border-gray-200' : 'bg-red-50 border-red-200 opacity-60'}`}>
+                      <div className="flex justify-between w-full mb-1 px-1">
+                        <span className={`text-[10px] font-semibold ${isActive ? 'text-slate-500' : 'text-red-500'}`}>V{idx + 1}</span>
+                        <input type="checkbox" checked={isActive} disabled={state.systemRunning}
+                          onChange={(e) => {
+                            const active = state.config.activeValves ? [...state.config.activeValves] : Array(10).fill(true);
+                            active[idx] = e.target.checked;
+                            apiCall('/api/config', { activeValves: active });
+                          }}
+                          className="w-3.5 h-3.5 text-red-600 rounded cursor-pointer" />
+                      </div>
+                      <input
+                        type="number" min={0.5} max={30} step={0.5}
+                        value={time} disabled={state.systemRunning || !isActive}
+                        onChange={(e) => {
+                          const t = [...state.config.valveFillTimes];
+                          t[idx] = parseFloat(e.target.value) || 1;
+                          apiCall('/api/config', { valveFillTimes: t });
+                        }}
+                        className={`w-full text-center text-sm font-mono border rounded-lg p-1.5 focus:outline-none min-h-[40px] disabled:opacity-50 ${isActive ? 'bg-white text-cyan-700 border-gray-300 focus:border-cyan-400' : 'bg-red-100 text-red-700 border-red-300 cursor-not-allowed'}`}
+                      />
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -630,7 +642,8 @@ function ValvesView({ state, apiCall }: { state: SystemState; apiCall: (e: strin
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         {state.valves.map((isActive, idx) => (
           <ValveButton key={idx} isActive={isActive} index={idx}
-            disabled={state.emergencyStop} simTime={simTime}
+            disabled={state.emergencyStop || (state.config.activeValves && !state.config.activeValves[idx])} simTime={simTime}
+            isBroken={state.config.activeValves && !state.config.activeValves[idx]}
             onClick={() => apiCall(`/api/valves/${idx}`, { active: !isActive })} />
         ))}
       </div>
@@ -638,27 +651,27 @@ function ValvesView({ state, apiCall }: { state: SystemState; apiCall: (e: strin
   );
 }
 
-// ─── Valf Butonu ─────────────────────────────────────────────────────────────
-interface ValveButtonProps { key?: React.Key; isActive: boolean; index: number; disabled: boolean; simTime: number; onClick: () => void; }
-function ValveButton({ isActive, index, disabled, simTime, onClick }: ValveButtonProps) {
+interface ValveButtonProps { key?: React.Key; isActive: boolean; index: number; disabled: boolean; simTime: number; onClick: () => void; isBroken?: boolean; }
+function ValveButton({ isActive, index, disabled, simTime, onClick, isBroken }: ValveButtonProps) {
   const noiseRef = useRef(Math.random() * 0.8);
   const flowRate = isActive ? 45 + Math.sin(simTime / 500 + index) * 2 + noiseRef.current : 0;
 
   return (
     <button
-      title={`Valf ${index + 1}: ${isActive ? 'Açık' : 'Kapalı'}`}
-      disabled={disabled}
+      title={isBroken ? `Valf ${index + 1}: ARIZALI/İPTAL` : `Valf ${index + 1}: ${isActive ? 'Açık' : 'Kapalı'}`}
+      disabled={disabled || isBroken}
       onClick={onClick}
-      className={`relative flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all active:scale-95 min-h-[110px] shadow-sm ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'} ${isActive ? 'bg-cyan-50 border-cyan-400 shadow-cyan-100' : 'bg-gray-50 border-gray-200 hover:border-gray-300 hover:bg-white'}`}
+      className={`relative flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all active:scale-95 min-h-[110px] shadow-sm ${disabled || isBroken ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} ${isBroken ? 'bg-red-50 border-red-200' : isActive ? 'bg-cyan-50 border-cyan-400 shadow-cyan-100' : 'bg-gray-50 border-gray-200 hover:border-gray-300 hover:bg-white'}`}
     >
-      <div className={`absolute top-2.5 right-2.5 w-2 h-2 rounded-full ${isActive ? 'bg-cyan-500 shadow-[0_0_6px_rgba(6,182,212,0.8)]' : 'bg-gray-300'}`} />
-      <Droplet className={`w-7 h-7 mb-1.5 ${isActive ? 'text-cyan-500' : 'text-gray-300'}`} />
-      <span className={`font-bold text-sm ${isActive ? 'text-cyan-700' : 'text-slate-600'}`}>VALF {index + 1}</span>
-      <div className={`mt-1.5 flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border ${isActive ? 'bg-cyan-100 text-cyan-700 border-cyan-300' : 'bg-gray-100 text-gray-400 border-gray-200'}`}>
-        <div className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-cyan-500 animate-pulse' : 'bg-gray-300'}`} />
-        {isActive ? 'AÇIK' : 'KAPALI'}
+      <div className={`absolute top-2.5 right-2.5 w-2 h-2 rounded-full ${isBroken ? 'bg-red-500' : isActive ? 'bg-cyan-500 shadow-[0_0_6px_rgba(6,182,212,0.8)]' : 'bg-gray-300'}`} />
+      {isBroken && <div className="absolute top-2.5 left-2.5 text-[9px] font-bold text-red-600 bg-red-100 px-1 rounded border border-red-200">İPTAL</div>}
+      <Droplet className={`w-7 h-7 mb-1.5 ${isBroken ? 'text-red-400' : isActive ? 'text-cyan-500' : 'text-gray-300'}`} />
+      <span className={`font-bold text-sm ${isBroken ? 'text-red-600 line-through' : isActive ? 'text-cyan-700' : 'text-slate-600'}`}>VALF {index + 1}</span>
+      <div className={`mt-1.5 flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border ${isBroken ? 'bg-red-100 text-red-600 border-red-200' : isActive ? 'bg-cyan-100 text-cyan-700 border-cyan-300' : 'bg-gray-100 text-gray-400 border-gray-200'}`}>
+        <div className={`w-1.5 h-1.5 rounded-full ${isBroken ? 'bg-red-500' : isActive ? 'bg-cyan-500 animate-pulse' : 'bg-gray-300'}`} />
+        {isBroken ? 'İPTAL EDİLDİ' : isActive ? 'AÇIK' : 'KAPALI'}
       </div>
-      {isActive && (
+      {isActive && !isBroken && (
         <div className="mt-1.5 text-[10px] font-mono text-cyan-700 bg-cyan-50 px-2 py-0.5 rounded border border-cyan-200 flex items-center gap-1">
           <Activity className="w-3 h-3" />
           {flowRate.toFixed(1)} L/dk

@@ -31,6 +31,7 @@ export interface SystemState {
     fillWaitTime: number;
     syrupVolume: number;
     valveFillTimes: number[];
+    activeValves: boolean[];
     targetBottles: number;
   };
   process: {

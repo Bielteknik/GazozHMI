@@ -49,6 +49,7 @@ const state: SystemState = {
     fillWaitTime:   savedConfig.fillWaitTime   ? parseInt(savedConfig.fillWaitTime)         : 3,
     syrupVolume:    savedConfig.syrupVolume     ? parseInt(savedConfig.syrupVolume)           : 40,
     valveFillTimes: savedConfig.valveFillTimes  ? JSON.parse(savedConfig.valveFillTimes)     : Array(10).fill(5),
+    activeValves:   savedConfig.activeValves    ? JSON.parse(savedConfig.activeValves)       : Array(10).fill(true),
     targetBottles:  savedConfig.targetBottles   ? parseInt(savedConfig.targetBottles)         : 10,
   },
   process: {
@@ -239,6 +240,10 @@ setInterval(() => {
       case 'FILLING':
         state.process.timer += TICK_RATE / 1000;
         for (let i = 0; i < state.config.targetBottles; i++) {
+          if (!state.config.activeValves[i]) {
+            state.valves[i] = false;
+            continue;
+          }
           if (i < state.process.bottlesInArea && state.process.timer < state.config.valveFillTimes[i]) {
             state.valves[i] = true;
           } else {
@@ -246,7 +251,10 @@ setInterval(() => {
           }
         }
         {
-          const active = state.config.valveFillTimes.slice(0, state.process.bottlesInArea);
+          const active = state.config.valveFillTimes
+            .slice(0, state.process.bottlesInArea)
+            .filter((_, idx) => state.config.activeValves[idx]);
+            
           const maxTime = active.length > 0 ? Math.max(...active) : 0;
           if (state.process.timer >= maxTime) {
             state.valves.fill(false);
@@ -328,6 +336,7 @@ async function startServer() {
   if (saved.fillWaitTime)   state.config.fillWaitTime   = parseInt(saved.fillWaitTime);
   if (saved.syrupVolume)    state.config.syrupVolume    = parseInt(saved.syrupVolume);
   if (saved.valveFillTimes) state.config.valveFillTimes = JSON.parse(saved.valveFillTimes);
+  if (saved.activeValves)   state.config.activeValves   = JSON.parse(saved.activeValves);
   if (saved.targetBottles)  state.config.targetBottles  = parseInt(saved.targetBottles);
 
   const app  = express();
@@ -386,11 +395,12 @@ async function startServer() {
   app.post('/api/config', (req, res) => {
     if (state.systemRunning) return res.status(400).json({ error: 'Sistem çalışırken ayar değiştirilemez' });
 
-    const { fillWaitTime, syrupVolume, valveFillTimes, targetBottles } = req.body;
+    const { fillWaitTime, syrupVolume, valveFillTimes, targetBottles, activeValves } = req.body;
 
     if (fillWaitTime  !== undefined) { state.config.fillWaitTime  = fillWaitTime;  saveConfig('fillWaitTime',   String(fillWaitTime)); }
     if (syrupVolume   !== undefined) { state.config.syrupVolume   = syrupVolume;   saveConfig('syrupVolume',    String(syrupVolume)); }
     if (valveFillTimes !== undefined) { state.config.valveFillTimes = valveFillTimes; saveConfig('valveFillTimes', JSON.stringify(valveFillTimes)); }
+    if (activeValves !== undefined) { state.config.activeValves = activeValves; saveConfig('activeValves', JSON.stringify(activeValves)); }
     if (targetBottles !== undefined) { state.config.targetBottles = targetBottles; saveConfig('targetBottles',  String(targetBottles)); }
 
     res.json(state);
