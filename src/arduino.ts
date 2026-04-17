@@ -83,21 +83,23 @@ export class ArduinoManager extends EventEmitter {
       });
 
       this.portInstance.on('error', (err: Error) => {
-        console.error(`[Arduino] Hata: ${err.message}`);
+        // Port yoksa veya Arduino bağlı değilse sessizce yeniden bağlanmayı dene
+        console.warn(`[Arduino] Bağlantı sorunu: ${err.message}`);
         this._connected = false;
         this.emit('disconnected');
         this.scheduleReconnect();
       });
 
       this.portInstance.on('close', () => {
-        console.log('[Arduino] Port kapandı.');
+        console.warn('[Arduino] Port kapandı, yeniden bağlanıyor...');
         this._connected = false;
         this.emit('disconnected');
         this.scheduleReconnect();
       });
 
     } catch (err: any) {
-      console.error('[Arduino] Port açılamadı:', err.message || err);
+      // Port açılamadı — Arduino bağlı değil olabilir, sessizce bekle
+      console.warn(`[Arduino] Port açılamadı (${this.portPath}): ${err.message || err}`);
       this._connected = false;
       this.emit('disconnected');
       this.scheduleReconnect();
@@ -106,11 +108,11 @@ export class ArduinoManager extends EventEmitter {
 
   private scheduleReconnect() {
     if (this.simulated || this.reconnectTimer) return;
-    console.log('[Arduino] 5 saniye sonra yeniden bağlanılacak...');
+    console.warn(`[Arduino] ${this.portPath} için 10s sonra yeniden denenecek...`);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
-    }, 5000);
+    }, 10000); // 10sn — daha az log spam
   }
 
   sendCommand(cmd: string): Promise<string> {

@@ -66,17 +66,24 @@ const state: SystemState = {
 // ─── Arduino Yöneticisi ───────────────────────────────────────────────────────
 const arduino = new ArduinoManager(ARDUINO_PORT, ARDUINO_BAUDRATE, ARDUINO_SIMULATION);
 
+let arduinoWasConnected = false;
+
 arduino.on('connected', () => {
   state.hardware.nano.connected = true;
   state.hardware.nano.status    = 'Bağlı';
+  arduinoWasConnected = true;
   addAlarm('INFO', `Arduino Nano bağlandı: ${ARDUINO_PORT} @ ${ARDUINO_BAUDRATE}`);
 });
 
 arduino.on('disconnected', () => {
   state.hardware.nano.connected = false;
   state.hardware.nano.status    = 'Bağlantı Kesildi';
-  state.hasError = true;
-  addAlarm('MOTOR_FAULT', 'Arduino Nano bağlantısı beklenmedik şekilde kesildi!');
+  // Sadece daha önce bağlıysa alarm yaz — ilk bağlantı denemelerinde alarm oluşturma
+  if (arduinoWasConnected) {
+    state.hasError = true;
+    addAlarm('MOTOR_FAULT', 'Arduino Nano bağlantısı beklenmedik şekilde kesildi!');
+    arduinoWasConnected = false;
+  }
 });
 
 // Gerçek Arduino olaylarını state'e yansıt
