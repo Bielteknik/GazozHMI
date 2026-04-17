@@ -7,9 +7,9 @@ import {
   Activity, Settings, AlertTriangle, Droplet, Cpu, ScanLine,
   Play, Square, Lock, Unlock, Timer, ToggleRight, ArrowRight,
   ArrowLeft, Terminal, History, Bell, CheckCircle, RefreshCw,
-  Maximize2, Minimize2,
+  Maximize2, Minimize2, PlusCircle, Trash2, Send, Watch, Link2
 } from 'lucide-react';
-import { SystemState, ProductionCycle, Alarm } from './types';
+import { SystemState, ProductionCycle, Alarm, CustomDevice } from './types';
 
 // ─── Ana Uygulama ─────────────────────────────────────────────────────────────
 export default function App() {
@@ -315,6 +315,7 @@ function SystemView({ state, apiCall }: { state: SystemState; apiCall: (e: strin
         <TabButton active={sysTab === 'settings'} onClick={() => setSysTab('settings')} icon={<Settings className="w-4 h-4" />} label="Ayarlar" />
         <TabButton active={sysTab === 'hardware'} onClick={() => setSysTab('hardware')} icon={<Cpu      className="w-4 h-4" />} label="Donanım" />
         <TabButton active={sysTab === 'test'}     onClick={() => setSysTab('test')}     icon={<Activity className="w-4 h-4" />} label="Test" />
+        <TabButton active={sysTab === 'custom'}   onClick={() => setSysTab('custom')}   icon={<PlusCircle className="w-4 h-4" />} label="Ekstra Donanımlar" />
         <TabButton active={sysTab === 'rpi'}      onClick={() => setSysTab('rpi')}      icon={<Terminal className="w-4 h-4" />} label="RPi" />
         <TabButton active={sysTab === 'nano'}     onClick={() => setSysTab('nano')}     icon={<Terminal className="w-4 h-4" />} label="Nano" />
         <TabButton active={sysTab === 'history'}  onClick={() => setSysTab('history')}  icon={<History  className="w-4 h-4" />} label="Geçmiş" />
@@ -383,6 +384,7 @@ function SystemView({ state, apiCall }: { state: SystemState; apiCall: (e: strin
         )}
 
         {sysTab === 'test'    && <div className="grid grid-cols-1 lg:grid-cols-2 gap-4"><TestView state={state} apiCall={apiCall} /></div>}
+        {sysTab === 'custom'  && <CustomHardwareView state={state} apiCall={apiCall} />}
         {sysTab === 'rpi'     && <HardwareTerminalView target="rpi"  title="Raspberry Pi"  state={state} apiCall={apiCall} />}
         {sysTab === 'nano'    && <HardwareTerminalView target="nano" title="Arduino Nano"  state={state} apiCall={apiCall} />}
         {sysTab === 'history' && <ProductionHistoryView />}
@@ -961,3 +963,151 @@ function AlarmsView() {
     </div>
   );
 }
+
+// ─── Ekstra Donanımlar ────────────────────────────────────────────────────────
+function CustomHardwareView({ state, apiCall }: { state: SystemState; apiCall: (e: string, p: Record<string, unknown>) => void }) {
+  const [showForm, setShowForm] = useState(false);
+  const [formData, setFormData] = useState<Partial<CustomDevice>>({
+    name: '', type: 'sensor', pin: '', command: '', responsePrefix: '', autoMode: false, pollIntervalSec: 3
+  });
+
+  const handleSave = () => {
+    if (!formData.name) return alert('İsim girmelisiniz');
+    const device: CustomDevice = {
+      id: crypto.randomUUID(),
+      name: formData.name,
+      type: formData.type as 'sensor' | 'actuator',
+      pin: formData.pin || 'Yok',
+      command: formData.command || '',
+      responsePrefix: formData.responsePrefix || '',
+      autoMode: formData.autoMode || false,
+      pollIntervalSec: formData.pollIntervalSec || 1,
+      lastValue: null,
+      lastUpdate: null,
+    };
+    fetch('/api/custom-hardware', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device }) });
+    setShowForm(false);
+  };
+
+  const handleTrigger = (id: string) => {
+    fetch(`/api/custom-hardware/${id}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+  };
+
+  const handleDelete = (id: string) => {
+    if (confirm('Donanımı silmek istediğinize emin misiniz?')) {
+      fetch(`/api/custom-hardware/${id}`, { method: 'DELETE' });
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      {showForm ? (
+        <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
+          <h3 className="text-base font-semibold mb-5 flex items-center gap-2 text-slate-700">
+            <PlusCircle className="w-5 h-5 text-slate-400" /> Yeni Donanım Tanımla
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div>
+              <label className="text-xs font-semibold text-slate-500 mb-1.5 block">Donanım Adı</label>
+              <input type="text" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })}
+                placeholder="Örn: Sıcaklık Sensörü" className="w-full bg-gray-50 border border-gray-300 rounded-xl px-3 py-2.5 text-sm" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-500 mb-1.5 block">Tip</label>
+              <select value={formData.type} onChange={e => setFormData({ ...formData, type: e.target.value as 'sensor' | 'actuator' })}
+                className="w-full bg-gray-50 border border-gray-300 rounded-xl px-3 py-2.5 text-sm">
+                <option value="sensor">Sensör (Okuma)</option>
+                <option value="actuator">Aktüatör (Kontrol/Tetik)</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-500 mb-1.5 block">Pin (Bilgi Amaçlı)</label>
+              <input type="text" value={formData.pin} onChange={e => setFormData({ ...formData, pin: e.target.value })}
+                placeholder="A0, D4 vb." className="w-full bg-gray-50 border border-gray-300 rounded-xl px-3 py-2.5 text-sm font-mono" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-500 mb-1.5 block">Gönderilecek Komut (Varsa)</label>
+              <input type="text" value={formData.command} onChange={e => setFormData({ ...formData, command: e.target.value })}
+                placeholder="Örn: READ_TEMP" className="w-full bg-gray-50 border border-gray-300 rounded-xl px-3 py-2.5 text-sm font-mono" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-500 mb-1.5 block">Beklenen Yanıt Başlığı</label>
+              <input type="text" value={formData.responsePrefix} onChange={e => setFormData({ ...formData, responsePrefix: e.target.value })}
+                placeholder="Örn: TEMP:" className="w-full bg-gray-50 border border-gray-300 rounded-xl px-3 py-2.5 text-sm font-mono" />
+            </div>
+            <div className="flex flex-col gap-2 border p-3 rounded-xl border-gray-200">
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 cursor-pointer">
+                <input type="checkbox" checked={formData.autoMode} onChange={e => setFormData({ ...formData, autoMode: e.target.checked })}
+                  className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500" />
+                Otomatik Olarak Sorgula
+              </label>
+              {formData.autoMode && (
+                <div className="flex items-center gap-2 mt-1">
+                  <input type="number" min={1} max={60} value={formData.pollIntervalSec} onChange={e => setFormData({ ...formData, pollIntervalSec: parseInt(e.target.value) || 1 })}
+                    className="w-20 bg-gray-50 border border-gray-300 rounded-lg px-2 py-1.5 text-sm my-auto text-center font-mono" />
+                  <span className="text-xs text-slate-500">Saniyede Bir (sn)</span>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="mt-6 flex justify-end gap-3 pt-4 border-t border-gray-100">
+            <button onClick={() => setShowForm(false)} className="px-5 py-2.5 rounded-xl border border-gray-300 text-slate-600 font-semibold text-sm hover:bg-gray-50">Vazgeç</button>
+            <button onClick={handleSave} className="px-5 py-2.5 rounded-xl bg-cyan-600 text-white font-bold text-sm hover:bg-cyan-700 transition-all shadow-sm">Kaydet</button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex justify-end">
+          <button onClick={() => setShowForm(true)} className="flex items-center gap-2 px-5 py-2.5 bg-cyan-600 hover:bg-cyan-700 active:scale-95 text-white rounded-xl font-bold text-sm shadow-sm transition-all min-h-[44px]">
+            <PlusCircle className="w-4 h-4" /> Yeni Donanım Ekle
+          </button>
+        </div>
+      )}
+
+      {state.customDevices?.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {state.customDevices.map(dev => (
+            <div key={dev.id} className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm flex flex-col min-h-[160px]">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h4 className="font-semibold text-slate-800">{dev.name}</h4>
+                  <div className="flex gap-2 text-xs font-mono text-slate-400 mt-1">
+                    <span className="px-1.5 bg-gray-50 border rounded-md">Pin: {dev.pin}</span>
+                    <span className="px-1.5 bg-gray-50 border rounded-md">{dev.type === 'sensor' ? 'Sensör' : 'Aktüatör'}</span>
+                  </div>
+                </div>
+                <button onClick={() => handleDelete(dev.id)} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="flex-1 flex flex-col justify-center mb-4 border border-gray-200 rounded-xl bg-gray-50 p-4 relative">
+                <span className="text-[10px] absolute top-2 right-2 text-slate-400 font-bold tracking-wider">SON DEĞER</span>
+                <span className={`text-2xl min-h-[32px] font-bold font-mono tracking-tight text-center ${dev.lastValue ? 'text-cyan-700' : 'text-slate-400'}`}>
+                  {dev.lastValue || '—'}
+                </span>
+                {dev.lastUpdate && <span className="text-[10px] text-slate-400 text-center mt-1">Son Güncelleme: {dev.lastUpdate}</span>}
+              </div>
+
+              <div className="flex justify-between items-center bg-gray-50 p-2 rounded-xl border border-gray-200 mt-auto">
+                <span className={`text-xs px-2 py-1 rounded-lg font-bold border ${dev.autoMode ? 'bg-cyan-50 text-cyan-600 border-cyan-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}>
+                  {dev.autoMode ? `AUTO (${dev.pollIntervalSec}s)` : 'MANUEL'}
+                </span>
+                {!dev.autoMode && dev.command && (
+                  <button onClick={() => handleTrigger(dev.id)} className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-600 text-white hover:bg-cyan-700 active:scale-95 transition-all text-xs font-bold rounded-lg shadow-sm">
+                    <Send className="w-3.5 h-3.5" /> Sor
+                  </button>
+                )}
+                {dev.type === 'actuator' && dev.autoMode === false && (
+                  <button onClick={() => handleTrigger(dev.id)} className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-white hover:bg-amber-600 active:scale-95 transition-all text-xs font-bold rounded-lg shadow-sm">
+                    <Activity className="w-3.5 h-3.5" /> Tetikle
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+

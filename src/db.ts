@@ -53,6 +53,17 @@ export async function initDb(): Promise<void> {
       message     TEXT    NOT NULL,
       resolved_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS custom_devices (
+      id              TEXT PRIMARY KEY,
+      name            TEXT NOT NULL,
+      type            TEXT NOT NULL,
+      pin             TEXT NOT NULL,
+      command         TEXT NOT NULL,
+      responsePrefix  TEXT NOT NULL,
+      autoMode        INTEGER NOT NULL DEFAULT 0,
+      pollIntervalSec INTEGER NOT NULL DEFAULT 1
+    );
   `);
 
   persist();
@@ -136,3 +147,39 @@ export function getAlarms(limit = 100): Alarm[] {
     Object.fromEntries(columns.map((c, i) => [c, row[i]])) as unknown as Alarm
   );
 }
+
+// ─── Özel Donanımlar ───────────────────────────────────────────────────────────
+import { CustomDevice } from './types';
+
+export function getCustomDevices(): CustomDevice[] {
+  const res = db.exec('SELECT * FROM custom_devices');
+  if (!res.length) return [];
+  const { columns, values } = res[0];
+  return values.map(row => {
+    const obj = Object.fromEntries(columns.map((c, i) => [c, row[i]]));
+    return {
+      ...obj,
+      autoMode: Boolean(obj.autoMode),
+      lastValue: null,
+      lastUpdate: null,
+    } as unknown as CustomDevice;
+  });
+}
+
+export function saveCustomDevice(device: CustomDevice): void {
+  db.run(`
+    INSERT OR REPLACE INTO custom_devices 
+    (id, name, type, pin, command, responsePrefix, autoMode, pollIntervalSec)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    device.id, device.name, device.type, device.pin,
+    device.command, device.responsePrefix, device.autoMode ? 1 : 0, device.pollIntervalSec
+  ]);
+  persist();
+}
+
+export function deleteCustomDevice(id: string): void {
+  db.run('DELETE FROM custom_devices WHERE id = ?', [id]);
+  persist();
+}
+

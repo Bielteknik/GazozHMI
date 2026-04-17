@@ -7,6 +7,7 @@ import {
   initDb, loadConfig, saveConfig,
   startCycle, completeCycle, getProductionHistory,
   addAlarm, resolveAlarm, getAlarms,
+  getCustomDevices, saveCustomDevice, deleteCustomDevice
 } from './src/db';
 import { ArduinoManager } from './src/arduino';
 
@@ -61,6 +62,7 @@ const state: SystemState = {
     nano: { connected: false, port: ARDUINO_PORT, baudRate: ARDUINO_BAUDRATE,
             status: ARDUINO_SIMULATION ? 'Simüle Edildi' : 'Bağlanıyor...', simulated: ARDUINO_SIMULATION },
   },
+  customDevices: [],
 };
 
 // ─── Arduino Yöneticisi ───────────────────────────────────────────────────────
@@ -112,6 +114,15 @@ if (!ARDUINO_SIMULATION) {
     } else if (line.startsWith('ERR:')) {
       addAlarm('SENSOR_FAULT', `Arduino hatası: ${line}`);
       state.hasError = true;
+    } else {
+      // Özel donanım verisi kontrolü (örneğin "TEMP:")
+      for (const dev of state.customDevices) {
+        if (dev.responsePrefix && line.startsWith(dev.responsePrefix)) {
+          dev.lastValue = line.substring(dev.responsePrefix.length).trim();
+          dev.lastUpdate = new Date().toLocaleTimeString('tr-TR');
+          break;
+        }
+      }
     }
   });
 }
@@ -284,6 +295,22 @@ setInterval(() => {
     // Gerçek Arduino modunda lock/valf komutlarını gönder
     syncArduino();
 
+    // Özel donanım otomatik polling
+    if (!ARDUINO_SIMULATION && arduino.isConnected) {
+      const now = Date.now();
+      state.customDevices.forEach(dev => {
+        if (dev.autoMode && dev.command && dev.pollIntervalSec > 0) {
+          // Bir nevi debounce, her loop'ta saati tutmak yerine basitce lastUpdate + interval e bakılır
+          // Fakat lastUpdate bir string. Bir 'lastPollMs' alanımız yok. Bunu state.customDevices üzerinde geçici olarak tutalım.
+          const devState = dev as any;
+          if (!devState._lastPollMs || now - devState._lastPollMs >= dev.pollIntervalSec * 1000) {
+            arduino.sendCommand(dev.command);
+            devState._lastPollMs = now;
+          }
+        }
+      });
+    }
+
   } else if (!state.systemRunning) {
     state.valves.fill(false);
     state.motors.forEach(m => { m.running = false; });
@@ -294,6 +321,8 @@ setInterval(() => {
 async function startServer() {
   // ── DB Başlatma ───────────────────────────────────────────────────────────────
   await initDb();
+  // Özel cihazları DB'den yükle
+  state.customDevices = getCustomDevices();
   // Kalıcı config yükle
   const saved = loadConfig();
   if (saved.fillWaitTime)   state.config.fillWaitTime   = parseInt(saved.fillWaitTime);
@@ -491,12 +520,45 @@ async function startServer() {
   });
 
   // ── Mevcut Serial Portlar ─────────────────────────────────────────────────────
-  app.get('/api/arduino/ports', async (_req, res) => {
+  app.get('/api/hardware/ports', async (_req, res) => {
     const ports = await arduino.listPorts();
     res.json(ports);
   });
 
-  // ── Vite / Statik ─────────────────────────────────────────────────────────────
+  // ─── Özel Donanım (Custom Hardware) ──────────────────────────────────────────
+  app.post('/api/custom-hardware', (req, res) => {
+    const dev = req.body.device;
+    if (!dev || !dev.id) return res.status(400).json({ error: 'Geçersiz parametreler' });
+    const existing = state.customDevices.findIndex(d => d.id === dev.id);
+    if (existing >= 0) state.customDevices[existing] = dev;
+    else state.customDevices.push(dev);
+    saveCustomDevice(dev);
+    res.json(state);
+  });
+
+  app.delete('/api/custom-hardware/:id', (req, res) => {
+    const id = req.params.id;
+    state.customDevices = state.customDevices.filter(d => d.id !== id);
+    deleteCustomDevice(id);
+    res.json(state);
+  });
+
+  app.post('/api/custom-hardware/:id/send', async (req, res) => {
+    const id = req.params.id;
+    const dev = state.customDevices.find(d => d.id === id);
+    if (!dev) return res.status(404).json({ error: 'Donanım bulunamadı' });
+    if (!arduino.isConnected && !ARDUINO_SIMULATION) {
+      return res.status(400).json({ error: 'Arduino bağlı değil' });
+    }
+    const cmd = req.body.command || dev.command;
+    if (cmd) {
+      if (!ARDUINO_SIMULATION) await arduino.sendCommand(cmd);
+      else console.log(`[SIMULATION] Gönderildi: ${cmd}`);
+    }
+    res.json({ success: true, command: cmd });
+  });
+
+  // ─── Vite Entegrasyonu ────────────────────────────────────────────────────────
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
     app.use(vite.middlewares);

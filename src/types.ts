@@ -43,6 +43,20 @@ export interface SystemState {
     rpi: { connected: boolean; port: string; status: string };
     nano: { connected: boolean; port: string; baudRate: number; status: string; simulated: boolean };
   };
+  customDevices: CustomDevice[];
+}
+
+export interface CustomDevice {
+  id: string;             // Benzersiz ID (UUID vb.)
+  name: string;           // Ekranda görünecek isim (örn. Sıcaklık)
+  type: 'sensor' | 'actuator'; // Sadece okuma mı (sensor), okuma/yazma/tetik mi (actuator)
+  pin: string;            // A0, D4 vs (bilgi amaçlı)
+  command: string;        // Arduino'ya gidecek komut (örn. READ_TEMP)
+  responsePrefix: string; // Arduino'dan gelecek yanıt başlangıcı (örn. TEMP:)
+  autoMode: boolean;      // Otomatik sorgulama açık mı?
+  pollIntervalSec: number;// Otomatik ise kaç saniyede bir sorulacak
+  lastValue: string | null;      // Cihazdan gelen son okunan değer
+  lastUpdate: string | null;     // Son güncelleme zaman damgası
 }
 
 export interface ProductionCycle {
