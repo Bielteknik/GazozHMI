@@ -54,15 +54,14 @@ export async function initDb(): Promise<void> {
       resolved_at TEXT
     );
 
-    CREATE TABLE IF NOT EXISTS custom_devices (
+    CREATE TABLE IF NOT EXISTS devices (
       id              TEXT PRIMARY KEY,
       name            TEXT NOT NULL,
       type            TEXT NOT NULL,
+      role            TEXT NOT NULL,
+      target          TEXT NOT NULL,
       pin             TEXT NOT NULL,
-      command         TEXT NOT NULL,
-      responsePrefix  TEXT NOT NULL,
-      autoMode        INTEGER NOT NULL DEFAULT 0,
-      pollIntervalSec INTEGER NOT NULL DEFAULT 1
+      fillDurationMs  INTEGER
     );
   `);
 
@@ -148,38 +147,38 @@ export function getAlarms(limit = 100): Alarm[] {
   );
 }
 
-// ─── Özel Donanımlar ───────────────────────────────────────────────────────────
-import { CustomDevice } from './types';
+// ─── Ekli Donanımlar (Devices) ─────────────────────────────────────────────────
+import { Device } from './types';
 
-export function getCustomDevices(): CustomDevice[] {
-  const res = db.exec('SELECT * FROM custom_devices');
+export function getDevices(): Device[] {
+  const res = db.exec('SELECT * FROM devices');
   if (!res.length) return [];
   const { columns, values } = res[0];
   return values.map(row => {
     const obj = Object.fromEntries(columns.map((c, i) => [c, row[i]]));
     return {
       ...obj,
-      autoMode: Boolean(obj.autoMode),
-      lastValue: null,
+      active: false,
+      count: 0,
       lastUpdate: null,
-    } as unknown as CustomDevice;
+    } as unknown as Device;
   });
 }
 
-export function saveCustomDevice(device: CustomDevice): void {
+export function saveDevice(device: Device): void {
   db.run(`
-    INSERT OR REPLACE INTO custom_devices 
-    (id, name, type, pin, command, responsePrefix, autoMode, pollIntervalSec)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR REPLACE INTO devices 
+    (id, name, type, role, target, pin, fillDurationMs)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `, [
-    device.id, device.name, device.type, device.pin,
-    device.command, device.responsePrefix, device.autoMode ? 1 : 0, device.pollIntervalSec
+    device.id, device.name, device.type, device.role,
+    device.target, device.pin, device.fillDurationMs || null
   ]);
   persist();
 }
 
-export function deleteCustomDevice(id: string): void {
-  db.run('DELETE FROM custom_devices WHERE id = ?', [id]);
+export function deleteDevice(id: string): void {
+  db.run('DELETE FROM devices WHERE id = ?', [id]);
   persist();
 }
 

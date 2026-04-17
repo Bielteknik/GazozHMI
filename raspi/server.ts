@@ -2,573 +2,433 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { SystemState } from './src/types';
+import { SystemState, Device } from './src/types';
 import {
   initDb, loadConfig, saveConfig,
   startCycle, completeCycle, getProductionHistory,
   addAlarm, resolveAlarm, getAlarms,
-  getCustomDevices, saveCustomDevice, deleteCustomDevice
+  getDevices, saveDevice, deleteDevice
 } from './src/db';
 import { ArduinoManager } from './src/arduino';
+
+let GpioClient: any = null;
+import('onoff').then(m => {
+  if (m.Gpio.accessible) {
+    GpioClient = m.Gpio;
+  } else {
+    console.warn('[GPIO] Donanım pinlerine erişim yok. (Raspi dışındasınız veya root değilsiniz).');
+  }
+}).catch(() => console.warn('[GPIO] Gpio kütüphanesi yüklenemedi.'));
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 
-// ─── Ortam Değişkenleri ───────────────────────────────────────────────────────
 const ARDUINO_PORT      = process.env.ARDUINO_PORT      || '/dev/ttyUSB0';
-const ARDUINO_BAUDRATE  = parseInt(process.env.ARDUINO_BAUDRATE  || '9600');
-// Simülasyon modu varsayılan KAPALI — açmak için ARDUINO_SIMULATION=true
-const ARDUINO_SIMULATION = process.env.ARDUINO_SIMULATION === 'true';
-
-// ─── Sistem Durumu (config DB'den yüklendikten sonra doldurulacak) ────────────
-let savedConfig: Record<string, string> = {};
+const ARDUINO_BAUDRATE  = parseInt(process.env.ARDUINO_BAUDRATE  || '115200');
 
 // ─── Sistem Durumu ───────────────────────────────────────────────────────────
 const state: SystemState = {
   systemRunning: false,
   emergencyStop: false,
   hasError: false,
-  valves: Array(10).fill(false),
-  motors: [
-    { id: 0, name: 'Ana Konveyör Bant',    running: false, speed: 50, direction: 'forward', runningTime: 0 },
-    { id: 1, name: 'Giriş Kilidi Motoru',  running: false, speed: 50, direction: 'forward', runningTime: 0, steps: 200 },
-    { id: 2, name: 'Çıkış Kilidi Motoru',  running: false, speed: 50, direction: 'forward', runningTime: 0, steps: 200 },
-  ],
-  sensors: [
-    { id: 0, name: 'Giriş Lazer Sensörü', count: 0, active: false, blocked: false },
-    { id: 1, name: 'Çıkış Lazer Sensörü', count: 0, active: false, blocked: false },
-  ],
-  limitSwitches: [
-    { id: 'entry_cw',  name: 'Giriş Kilidi İleri Limit (Kapalı)', active: false, type: 'entry', position: 'cw' },
-    { id: 'entry_ccw', name: 'Giriş Kilidi Geri Limit (Açık)',    active: true,  type: 'entry', position: 'ccw' },
-    { id: 'exit_cw',   name: 'Çıkış Kilidi İleri Limit (Kapalı)', active: true,  type: 'exit',  position: 'cw' },
-    { id: 'exit_ccw',  name: 'Çıkış Kilidi Geri Limit (Açık)',   active: false, type: 'exit',  position: 'ccw' },
-  ],
-  locks: { entry: false, exit: true },
-  config: {
-    fillWaitTime:   savedConfig.fillWaitTime   ? parseInt(savedConfig.fillWaitTime)         : 3,
-    syrupVolume:    savedConfig.syrupVolume     ? parseInt(savedConfig.syrupVolume)           : 40,
-    valveFillTimes: savedConfig.valveFillTimes  ? JSON.parse(savedConfig.valveFillTimes)     : Array(10).fill(5),
-    activeValves:   savedConfig.activeValves    ? JSON.parse(savedConfig.activeValves)       : Array(10).fill(true),
-    targetBottles:  savedConfig.targetBottles   ? parseInt(savedConfig.targetBottles)         : 10,
-  },
+  
   process: {
-    state: 'WAITING_BOTTLES',
+    state: 'IDLE',
     bottlesInArea: 0,
-    timer: 0,
+    targetBottles: 10,
     currentCycleId: undefined,
   },
+  
   hardware: {
-    rpi:  { connected: true,  port: 'GPIO',         status: 'Aktif' },
-    nano: { connected: false, port: ARDUINO_PORT, baudRate: ARDUINO_BAUDRATE,
-            status: ARDUINO_SIMULATION ? 'Simüle Edildi' : 'Bağlanıyor...', simulated: ARDUINO_SIMULATION },
+    rpi:  { connected: true,  status: 'Aktif' },
+    nano: { connected: false, port: ARDUINO_PORT, baudRate: ARDUINO_BAUDRATE, status: 'Bekleniyor...' },
   },
-  customDevices: [],
+  config: {
+    fillWaitTime: 1000,
+    sensorTimeout: 30000,
+    dailyQuota: 10000,
+  },
+  devices: [],
 };
 
-// ─── Arduino Yöneticisi ───────────────────────────────────────────────────────
-const arduino = new ArduinoManager(ARDUINO_PORT, ARDUINO_BAUDRATE, ARDUINO_SIMULATION);
+// ─── Arduino Master Yöneticisi ────────────────────────────────────────────────
+let arduino: ArduinoManager;
 
-let arduinoWasConnected = false;
+// ─── Raspi GPIO (Sensörler) Olay Dinleyicileri (Event Driven) ─────────────────
+const gpioInstances: Record<string, any> = {};
 
-arduino.on('connected', () => {
-  state.hardware.nano.connected = true;
-  state.hardware.nano.status    = 'Bağlı';
-  arduinoWasConnected = true;
-  addAlarm('INFO', `Arduino Nano bağlandı: ${ARDUINO_PORT} @ ${ARDUINO_BAUDRATE}`);
-});
+function setupGpioWatchers() {
+  // Eski watcherları temizle
+  Object.values(gpioInstances).forEach(gpio => {
+    try { gpio.unexport(); } catch(e){}
+  });
 
-arduino.on('disconnected', () => {
-  state.hardware.nano.connected = false;
-  state.hardware.nano.status    = 'Bağlantı Kesildi';
-  // Sadece daha önce bağlıysa alarm yaz — ilk bağlantı denemelerinde alarm oluşturma
-  if (arduinoWasConnected) {
-    state.hasError = true;
-    addAlarm('MOTOR_FAULT', 'Arduino Nano bağlantısı beklenmedik şekilde kesildi!');
-    arduinoWasConnected = false;
-  }
-});
+  if (!GpioClient) return;
 
-// Gerçek Arduino olaylarını state'e yansıt
-if (!ARDUINO_SIMULATION) {
-  arduino.on('data', (line: string) => {
-    if (line.startsWith('SENSOR:0:ON') && state.systemRunning && state.process.state === 'WAITING_BOTTLES') {
-      state.sensors[0].active = true;
-      state.sensors[0].count++;
-      state.process.bottlesInArea++;
-    } else if (line.startsWith('SENSOR:1:ON') && state.systemRunning && state.process.state === 'EXITING_BOTTLES') {
-      state.sensors[1].active = true;
-      state.sensors[1].count++;
-      state.process.bottlesInArea = Math.max(0, state.process.bottlesInArea - 1);
-    } else if (line.startsWith('LIMIT:entry_cw:ON')) {
-      setLimitSwitch('entry_cw', true);  setLimitSwitch('entry_ccw', false);
-      state.locks.entry = true;  state.motors[1].running = false;
-    } else if (line.startsWith('LIMIT:entry_ccw:ON')) {
-      setLimitSwitch('entry_ccw', true);  setLimitSwitch('entry_cw', false);
-      state.locks.entry = false;  state.motors[1].running = false;
-    } else if (line.startsWith('LIMIT:exit_cw:ON')) {
-      setLimitSwitch('exit_cw', true);  setLimitSwitch('exit_ccw', false);
-      state.locks.exit = true;  state.motors[2].running = false;
-    } else if (line.startsWith('LIMIT:exit_ccw:ON')) {
-      setLimitSwitch('exit_ccw', true);  setLimitSwitch('exit_cw', false);
-      state.locks.exit = false;  state.motors[2].running = false;
-    } else if (line.startsWith('ERR:')) {
-      addAlarm('SENSOR_FAULT', `Arduino hatası: ${line}`);
-      state.hasError = true;
-    } else {
-      // Özel donanım verisi kontrolü (örneğin "TEMP:")
-      for (const dev of state.customDevices) {
-        if (dev.responsePrefix && line.startsWith(dev.responsePrefix)) {
-          dev.lastValue = line.substring(dev.responsePrefix.length).trim();
-          dev.lastUpdate = new Date().toLocaleTimeString('tr-TR');
-          break;
-        }
+  for (const dev of state.devices) {
+    if (dev.target === 'raspi' && (dev.role === 'entry_laser' || dev.role === 'exit_laser')) {
+      try {
+        const pinNum = parseInt(dev.pin.replace(/\D/g, ''));
+        const sensor = new GpioClient(pinNum, 'in', 'falling'); // Düşen kenar tetiklemesi
+        gpioInstances[dev.id] = sensor;
+        
+        sensor.watch((err: any, value: number) => {
+          if (err) return;
+          if (!state.systemRunning) return;
+
+          if (dev.role === 'entry_laser' && state.process.state === 'WAITING_ENTRY') {
+            dev.count = (dev.count || 0) + 1;
+            dev.active = true; setTimeout(() => { dev.active = false; }, 200);
+            state.process.bottlesInArea = dev.count;
+
+            if (state.process.bottlesInArea >= state.process.targetBottles) {
+              dev.count = 0; // Sıfırla
+              startAutonomousFilling();
+            }
+          } 
+          else if (dev.role === 'exit_laser' && state.process.state === 'WAITING_EXIT') {
+            dev.count = (dev.count || 0) + 1;
+            dev.active = true; setTimeout(() => { dev.active = false; }, 200);
+            
+            if (dev.count >= state.process.targetBottles) {
+              dev.count = 0;
+              finishCycle();
+            }
+          }
+        });
+        console.log(`[GPIO] Raspi sensörü ${dev.name} pine bağlandı: ${pinNum}`);
+      } catch (e: any) {
+        console.error(`[GPIO] Cihaz bağlanamadı: ${dev.name}`, e.message);
       }
     }
-  });
+  }
 }
 
-function setLimitSwitch(id: string, active: boolean) {
-  const sw = state.limitSwitches.find(s => s.id === id);
-  if (sw) sw.active = active;
+// ─── Otonom Süreç Kontrol Fonksiyonları ───────────────────────────────────────
+function findDeviceByRole(role: string): Device | undefined {
+  return state.devices.find(d => d.role === role);
 }
 
-// ─── Arduino Senkronu (gerçek mod için lock/valf komutları) ──────────────────
-const lastSent = {
-  locks:  { entry: state.locks.entry, exit: state.locks.exit },
-  valves: [...state.valves],
-};
-
-function syncArduino() {
-  if (ARDUINO_SIMULATION) return;
-
-  if (state.locks.entry !== lastSent.locks.entry) {
-    arduino.sendCommand(state.locks.entry ? 'MOTOR:1:CLOSE' : 'MOTOR:1:OPEN');
-    lastSent.locks.entry = state.locks.entry;
+function openEntryGate() {
+  const gate = findDeviceByRole('entry_lock');
+  if (gate && gate.target === 'nano') {
+    arduino.sendCommand(`OPEN:${gate.pin}`);
   }
-  if (state.locks.exit !== lastSent.locks.exit) {
-    arduino.sendCommand(state.locks.exit ? 'MOTOR:2:CLOSE' : 'MOTOR:2:OPEN');
-    lastSent.locks.exit = state.locks.exit;
+}
+
+function closeEntryGate() {
+  const gate = findDeviceByRole('entry_lock');
+  if (gate && gate.target === 'nano') {
+    arduino.sendCommand(`CLOSE:${gate.pin}`);
   }
-  state.valves.forEach((v, i) => {
-    if (v !== lastSent.valves[i]) {
-      arduino.sendCommand(`VALVE:${i}:${v ? 'ON' : 'OFF'}`);
-      lastSent.valves[i] = v;
+}
+
+function openExitGate() {
+  const gate = findDeviceByRole('exit_lock');
+  if (gate && gate.target === 'nano') {
+    arduino.sendCommand(`OPEN:${gate.pin}`);
+  }
+}
+
+function closeExitGate() {
+  const gate = findDeviceByRole('exit_lock');
+  if (gate && gate.target === 'nano') {
+    arduino.sendCommand(`CLOSE:${gate.pin}`);
+  }
+}
+
+function startAutonomousFilling() {
+  closeEntryGate();
+  state.process.state = 'FILLING';
+  
+  // 1 saniye kilit güvenliği beklemesi
+  setTimeout(() => {
+    // Nano'ya hangi valfleri ne kadar süreyle açacağını hesaplayıp gönder
+    const fillCmdParts: string[] = [];
+    for (let i = 1; i <= state.process.targetBottles; i++) {
+       const valve = findDeviceByRole(`valve_${i}`);
+       if (valve && valve.target === 'nano' && valve.fillDurationMs) {
+         fillCmdParts.push(`${valve.pin}=${valve.fillDurationMs}`);
+       }
     }
-  });
-}
-
-// ─── Simülasyon Yardımcısı ────────────────────────────────────────────────────
-function simulateLockMotor(motorId: number, type: 'entry' | 'exit', targetState: 'open' | 'closed') {
-  const motor     = state.motors[motorId];
-  const cwSwitch  = state.limitSwitches.find(s => s.type === type && s.position === 'cw')!;
-  const ccwSwitch = state.limitSwitches.find(s => s.type === type && s.position === 'ccw')!;
-
-  if (targetState === 'closed') {
-    if (!cwSwitch.active) {
-      motor.running   = true;
-      motor.direction = 'forward';
-      ccwSwitch.active = false;
-      if (Math.random() > 0.5) { cwSwitch.active = true; motor.running = false; state.locks[type] = true; }
+    
+    if (fillCmdParts.length > 0) {
+      const fwCmd = `FILL_START:${fillCmdParts.join(',')}`;
+      console.log(`[SÜREÇ] Dolum Başlıyor: ${fwCmd}`);
+      arduino.sendCommand(fwCmd);
     } else {
-      motor.running = false; state.locks[type] = true;
+      console.warn(`[SÜREÇ] Sisteme hiç valf tanımlanmamış. Otomatik atlanıyor.`);
+      setTimeout(() => {
+        state.process.state = 'WAITING_EXIT';
+        openExitGate();
+      }, 1000);
     }
+  }, 1000);
+}
+
+function finishCycle() {
+  closeExitGate();
+  state.process.bottlesInArea = 0;
+  
+  if (state.process.currentCycleId) {
+    completeCycle(state.process.currentCycleId, 'completed', state.process.targetBottles, state.process.targetBottles);
+    state.process.currentCycleId = undefined;
+  }
+  
+  // Eğer sistem hala açıksa yeni döngüye geç
+  if (state.systemRunning) {
+    state.process.state = 'WAITING_ENTRY';
+    state.process.currentCycleId = startCycle();
+    openEntryGate();
+    console.log('[SÜREÇ] Döngü tamamlandı. Yenisi başlıyor.');
   } else {
-    if (!ccwSwitch.active) {
-      motor.running   = true;
-      motor.direction = 'reverse';
-      cwSwitch.active = false;
-      if (Math.random() > 0.5) { ccwSwitch.active = true; motor.running = false; state.locks[type] = false; }
-    } else {
-      motor.running = false; state.locks[type] = false;
-    }
+    state.process.state = 'IDLE';
   }
 }
-
-// ─── Durum Makinesi Tik ───────────────────────────────────────────────────────
-const TICK_RATE = 500;
-
-setInterval(() => {
-  // Sensör aktif sinyallerini sıfırla
-  state.sensors.forEach(s => { if (!s.blocked) s.active = false; });
-
-  if (state.systemRunning && !state.emergencyStop) {
-    // Motor çalışma süresi
-    state.motors.forEach(m => { if (m.running) m.runningTime += TICK_RATE / 1000; });
-
-    switch (state.process.state) {
-
-      case 'WAITING_BOTTLES':
-        simulateLockMotor(1, 'entry', 'open');
-        simulateLockMotor(2, 'exit',  'closed');
-        state.valves.fill(false);
-
-        if (!state.locks.entry) {
-          state.motors[0].running = true;
-        } else {
-          state.motors[0].running = false;
-        }
-
-        if (state.motors[0].running && state.process.bottlesInArea < state.config.targetBottles) {
-          if (Math.random() > 0.3) {
-            state.sensors[0].count++;
-            state.sensors[0].active = true;
-            state.process.bottlesInArea++;
-          }
-        }
-
-        if (state.process.bottlesInArea >= state.config.targetBottles) {
-          state.motors[0].running = false;
-          state.process.state     = 'PRE_FILL_WAIT';
-          state.process.timer     = state.config.fillWaitTime;
-          // Üretim döngüsünü DB'de başlat
-          state.process.currentCycleId = startCycle();
-        }
-        break;
-
-      case 'PRE_FILL_WAIT':
-        simulateLockMotor(1, 'entry', 'closed');
-        if (state.locks.entry) {
-          state.process.timer -= TICK_RATE / 1000;
-          if (state.process.timer <= 0) {
-            state.process.state = 'FILLING';
-            state.process.timer = 0;
-          }
-        }
-        break;
-
-      case 'FILLING':
-        state.process.timer += TICK_RATE / 1000;
-        for (let i = 0; i < state.config.targetBottles; i++) {
-          if (!state.config.activeValves[i]) {
-            state.valves[i] = false;
-            continue;
-          }
-          if (i < state.process.bottlesInArea && state.process.timer < state.config.valveFillTimes[i]) {
-            state.valves[i] = true;
-          } else {
-            state.valves[i] = false;
-          }
-        }
-        {
-          const active = state.config.valveFillTimes
-            .slice(0, state.process.bottlesInArea)
-            .filter((_, idx) => state.config.activeValves[idx]);
-            
-          const maxTime = active.length > 0 ? Math.max(...active) : 0;
-          if (state.process.timer >= maxTime) {
-            state.valves.fill(false);
-            state.process.state = 'POST_FILL_WAIT';
-            state.process.timer = 0;
-          }
-        }
-        break;
-
-      case 'POST_FILL_WAIT':
-        state.process.timer += TICK_RATE / 1000;
-        if (state.process.timer >= 1.0) {
-          state.process.state = 'EXITING_BOTTLES';
-        }
-        break;
-
-      case 'EXITING_BOTTLES':
-        simulateLockMotor(1, 'entry', 'closed');
-        simulateLockMotor(2, 'exit',  'open');
-
-        if (!state.locks.exit) {
-          state.motors[0].running = true;
-          if (state.process.bottlesInArea > 0 && Math.random() > 0.3) {
-            state.sensors[1].count++;
-            state.sensors[1].active = true;
-            state.process.bottlesInArea--;
-          }
-          if (state.process.bottlesInArea <= 0) {
-            state.motors[0].running = false;
-            // Döngüyü tamamla
-            if (state.process.currentCycleId) {
-              completeCycle(
-                state.process.currentCycleId,
-                'completed',
-                state.sensors[0].count,
-                state.sensors[1].count,
-              );
-              state.process.currentCycleId = undefined;
-            }
-            state.process.state = 'WAITING_BOTTLES';
-          }
-        }
-        break;
-    }
-
-    // Gerçek Arduino modunda lock/valf komutlarını gönder
-    syncArduino();
-
-    // Özel donanım otomatik polling
-    if (!ARDUINO_SIMULATION && arduino.isConnected) {
-      const now = Date.now();
-      state.customDevices.forEach(dev => {
-        if (dev.autoMode && dev.command && dev.pollIntervalSec > 0) {
-          // Bir nevi debounce, her loop'ta saati tutmak yerine basitce lastUpdate + interval e bakılır
-          // Fakat lastUpdate bir string. Bir 'lastPollMs' alanımız yok. Bunu state.customDevices üzerinde geçici olarak tutalım.
-          const devState = dev as any;
-          if (!devState._lastPollMs || now - devState._lastPollMs >= dev.pollIntervalSec * 1000) {
-            arduino.sendCommand(dev.command);
-            devState._lastPollMs = now;
-          }
-        }
-      });
-    }
-
-  } else if (!state.systemRunning) {
-    state.valves.fill(false);
-    state.motors.forEach(m => { m.running = false; });
-  }
-}, TICK_RATE);
 
 // ─── Express Sunucu ───────────────────────────────────────────────────────────
 async function startServer() {
-  // ── DB Başlatma ───────────────────────────────────────────────────────────────
+  // DB Başlatma
   await initDb();
-  // Özel cihazları DB'den yükle
-  state.customDevices = getCustomDevices();
-  // Kalıcı config yükle
+  
+  // Cihazları Yükle
+  state.devices = getDevices();
+  setupGpioWatchers(); // Raspi GPIO event watcher'larını kur
+
+  // Config Yükle
   const saved = loadConfig();
-  if (saved.fillWaitTime)   state.config.fillWaitTime   = parseInt(saved.fillWaitTime);
-  if (saved.syrupVolume)    state.config.syrupVolume    = parseInt(saved.syrupVolume);
-  if (saved.valveFillTimes) state.config.valveFillTimes = JSON.parse(saved.valveFillTimes);
-  if (saved.activeValves)   state.config.activeValves   = JSON.parse(saved.activeValves);
-  if (saved.targetBottles)  state.config.targetBottles  = parseInt(saved.targetBottles);
+  if (saved.targetBottles) state.process.targetBottles = parseInt(saved.targetBottles);
+  if (saved.fillWaitTime) state.config.fillWaitTime = parseInt(saved.fillWaitTime);
+  if (saved.sensorTimeout) state.config.sensorTimeout = parseInt(saved.sensorTimeout);
+  if (saved.dailyQuota) state.config.dailyQuota = parseInt(saved.dailyQuota);
+
+  // DB ve Konfigürasyonlar tam hazır olduktan sonra Arduino'yu başlat
+  arduino = new ArduinoManager(ARDUINO_PORT, ARDUINO_BAUDRATE, false);
+
+  arduino.on('connected', async () => {
+    state.hardware.nano.connected = true;
+    state.hardware.nano.status    = 'Bağlı';
+    addAlarm('INFO', `PLC OUT Driver bağlandı: ${ARDUINO_PORT}`);
+    
+    // Nano'ya cihaz konfigürasyonlarını yolla
+    for (const dev of state.devices) {
+      if (dev.target === 'nano') {
+        const typeStr = dev.type === 'valve' || dev.type === 'motor' ? 'valve' : dev.type;
+        await arduino.sendCommand(`PINCFG:${typeStr}:${dev.pin}`);
+      }
+    }
+  });
+
+  arduino.on('disconnected', () => {
+    state.hardware.nano.connected = false;
+    state.hardware.nano.status    = 'Bağlantı Kesildi';
+    state.hasError = true;
+    state.systemRunning = false;
+    addAlarm('MOTOR_FAULT', 'PLC OUT Driver bağlantısı kesildi!');
+  });
+
+  arduino.on('data', (line: string) => {
+    if (line === 'FILL_DONE' && state.process.state === 'FILLING') {
+      state.process.state = 'WAITING_EXIT';
+      console.log('[SÜREÇ] Dolumlar Tamamlandı. Çıkış bekleniyor.');
+      openExitGate();
+    } else if (line === 'FILL_DONE' && state.process.state === 'WASHING') {
+      state.process.state = 'IDLE';
+      console.log('[SÜREÇ] CIP Yıkama Tamamlandı.');
+    } else if (line.startsWith('ERR:')) {
+      addAlarm('MOTOR_FAULT', `Pano Hatası: ${line}`);
+      state.hasError = true;
+    }
+  });
 
   const app  = express();
   const PORT = parseInt(process.env.PORT || '3000');
 
   app.use(express.json());
 
-  // ── Temel Durum ──────────────────────────────────────────────────────────────
   app.get('/api/state', (_req, res) => {
-    // Nano durumunu gerçek zamanlı yansıt
-    state.hardware.nano.connected = arduino.isConnected;
     res.json(state);
   });
 
-  // ── Acil Stop ─────────────────────────────────────────────────────────────────
   app.post('/api/estop', (req, res) => {
     state.emergencyStop = req.body.active;
     if (state.emergencyStop) {
       state.systemRunning = false;
-      state.valves.fill(false);
-      state.motors.forEach(m => { m.running = false; });
-      state.locks.entry = true;
-      state.locks.exit  = true;
-      // DB'de alarm kaydet
+      state.process.state = 'IDLE';
       addAlarm('ESTOP', 'Acil stop butonu etkinleştirildi!');
-      // Aktif döngüyü kes
+      
       if (state.process.currentCycleId) {
-        completeCycle(state.process.currentCycleId, 'estop',
-          state.sensors[0].count, state.sensors[1].count);
+        completeCycle(state.process.currentCycleId, 'estop', state.process.bottlesInArea, 0);
         state.process.currentCycleId = undefined;
       }
-      // Arduino'ya gönder
       arduino.sendCommand('ESTOP');
-    } else {
-      state.hasError = false;
-      arduino.sendCommand('RESET');
     }
     res.json(state);
   });
 
-  // ── Sistem Başlat/Durdur ──────────────────────────────────────────────────────
   app.post('/api/system', (req, res) => {
     if (state.emergencyStop) return res.status(400).json({ error: 'Acil stop aktif' });
+    
     const wasRunning = state.systemRunning;
     state.systemRunning = req.body.running;
-    // Sistem duruyorsa aktif döngüyü kaydet
-    if (wasRunning && !state.systemRunning && state.process.currentCycleId) {
-      completeCycle(state.process.currentCycleId, 'interrupted',
-        state.sensors[0].count, state.sensors[1].count);
-      state.process.currentCycleId = undefined;
-    }
-    res.json(state);
-  });
-
-  // ── Konfigürasyon ─────────────────────────────────────────────────────────────
-  app.post('/api/config', (req, res) => {
-    if (state.systemRunning) return res.status(400).json({ error: 'Sistem çalışırken ayar değiştirilemez' });
-
-    const { fillWaitTime, syrupVolume, valveFillTimes, targetBottles, activeValves } = req.body;
-
-    if (fillWaitTime  !== undefined) { state.config.fillWaitTime  = fillWaitTime;  saveConfig('fillWaitTime',   String(fillWaitTime)); }
-    if (syrupVolume   !== undefined) { state.config.syrupVolume   = syrupVolume;   saveConfig('syrupVolume',    String(syrupVolume)); }
-    if (valveFillTimes !== undefined) { state.config.valveFillTimes = valveFillTimes; saveConfig('valveFillTimes', JSON.stringify(valveFillTimes)); }
-    if (activeValves !== undefined) { state.config.activeValves = activeValves; saveConfig('activeValves', JSON.stringify(activeValves)); }
-    if (targetBottles !== undefined) { state.config.targetBottles = targetBottles; saveConfig('targetBottles',  String(targetBottles)); }
-
-    res.json(state);
-  });
-
-  // ── Valf Kontrolü ─────────────────────────────────────────────────────────────
-  app.post('/api/valves/:id', (req, res) => {
-    if (state.emergencyStop) return res.status(400).json({ error: 'Acil stop aktif' });
-    const id = parseInt(req.params.id);
-    if (id >= 0 && id < 10) {
-      state.valves[id] = req.body.active;
-      if (!ARDUINO_SIMULATION) arduino.sendCommand(`VALVE:${id}:${req.body.active ? 'ON' : 'OFF'}`);
-    }
-    res.json(state);
-  });
-
-  // ── Motor Kontrolü ────────────────────────────────────────────────────────────
-  app.post('/api/motors/:id', (req, res) => {
-    if (state.emergencyStop) return res.status(400).json({ error: 'Acil stop aktif' });
-    const id = parseInt(req.params.id);
-    if (id >= 0 && id < state.motors.length) {
-      if (req.body.running   !== undefined) state.motors[id].running   = req.body.running;
-      if (req.body.speed     !== undefined) state.motors[id].speed     = req.body.speed;
-      if (req.body.direction !== undefined) state.motors[id].direction = req.body.direction;
-      if (req.body.steps     !== undefined) state.motors[id].steps     = req.body.steps;
-    }
-    res.json(state);
-  });
-
-  // ── Sensör Sıfırla ────────────────────────────────────────────────────────────
-  app.post('/api/sensors/reset', (_req, res) => {
-    state.sensors.forEach(s => { s.count = 0; });
-    res.json(state);
-  });
-
-  // ── Sensör Engel Testi ────────────────────────────────────────────────────────
-  app.post('/api/sensors/toggle', (req, res) => {
-    if (state.systemRunning) return res.status(400).json({ error: 'Sistem çalışırken test yapılamaz' });
-    const { id, blocked } = req.body;
-    const sensor = state.sensors.find(s => s.id === id);
-    if (sensor) {
-      if (blocked && !sensor.blocked) { sensor.count++; sensor.active = true; }
-      else if (!blocked && sensor.blocked) { sensor.active = false; }
-      sensor.blocked = blocked;
-    }
-    res.json(state);
-  });
-
-  // ── Kilit Testi ───────────────────────────────────────────────────────────────
-  app.post('/api/locks/toggle', (req, res) => {
-    if (state.systemRunning) return res.status(400).json({ error: 'Sistem çalışırken test yapılamaz' });
-    const { type, open } = req.body;
-    if (type === 'entry' || type === 'exit') {
-      state.locks[type] = !open;
-      const cw  = state.limitSwitches.find(s => s.type === type && s.position === 'cw');
-      const ccw = state.limitSwitches.find(s => s.type === type && s.position === 'ccw');
-      if (cw && ccw) { cw.active = !open; ccw.active = open; }
-      // Arduino komut gönder
-      if (!ARDUINO_SIMULATION) {
-        const motorId = type === 'entry' ? 1 : 2;
-        arduino.sendCommand(`MOTOR:${motorId}:${open ? 'OPEN' : 'CLOSE'}`);
+    
+    if (state.systemRunning && !wasRunning) {
+      // Sistemi Başlat
+      state.process.state = 'WAITING_ENTRY';
+      state.process.bottlesInArea = 0;
+      state.process.currentCycleId = startCycle();
+      closeExitGate();
+      openEntryGate();
+    } 
+    else if (!state.systemRunning && wasRunning) {
+      // Sistemi Durdur
+      state.process.state = 'IDLE';
+      closeEntryGate();
+      closeExitGate();
+      if (state.process.currentCycleId) {
+        completeCycle(state.process.currentCycleId, 'interrupted', state.process.bottlesInArea, 0);
+        state.process.currentCycleId = undefined;
       }
     }
     res.json(state);
   });
 
-  // ── Valf Dolum Süresi Testi ───────────────────────────────────────────────────
-  app.post('/api/valves/test', (req, res) => {
-    if (state.systemRunning) return res.status(400).json({ error: 'Sistem çalışırken test yapılamaz' });
-    const { index } = req.body;
-    if (index >= 0 && index < state.valves.length) {
-      state.valves[index] = true;
-      if (!ARDUINO_SIMULATION) arduino.sendCommand(`VALVE:${index}:ON`);
-      const duration = state.config.valveFillTimes[index] * 1000;
-      setTimeout(() => {
-        state.valves[index] = false;
-        if (!ARDUINO_SIMULATION) arduino.sendCommand(`VALVE:${index}:OFF`);
-      }, duration);
+  app.post('/api/wash', (req, res) => {
+    if (state.systemRunning) return res.status(400).json({ error: 'Sistem çalışırken yıkama yapılamaz' });
+    if (state.emergencyStop) return res.status(400).json({ error: 'Acil stop aktif' });
+
+    const totalDuration = req.body.duration || 60000;
+    state.process.state = 'WASHING';
+    
+    const washValves = state.devices.filter(d => d.target === 'nano' && d.type === 'valve');
+    if (washValves.length === 0) {
+      setTimeout(() => { state.process.state = 'IDLE'; }, 1000);
+      return res.json(state);
+    }
+
+    let elapsed = 0;
+    const pulseActive = 5000; // 5sn Açık
+    const pulseWait = 2000;   // 2sn Kapalı
+    const cycleTime = pulseActive + pulseWait;
+
+    console.log(`[SÜREÇ] Darbeli CIP Yıkama Başlıyor (Hedef: ${totalDuration}ms)`);
+
+    const washInterval = setInterval(() => {
+      if (elapsed >= totalDuration || state.emergencyStop) {
+        clearInterval(washInterval);
+        state.process.state = 'IDLE';
+        console.log('[SÜREÇ] CIP Yıkama Bitti veya Durduruldu.');
+        return;
+      }
+
+      const fwCmd = `FILL_START:${washValves.map(v => `${v.pin}=${pulseActive}`).join(',')}`;
+      console.log(`[SÜREÇ] Yıkama Darbesi Gönderiliyor (${elapsed}/${totalDuration}ms)`);
+      if (arduino.isConnected) arduino.sendCommand(fwCmd);
+      
+      elapsed += cycleTime;
+    }, cycleTime);
+
+    // İlk tetikleme
+    const fwCmd = `FILL_START:${washValves.map(v => `${v.pin}=${pulseActive}`).join(',')}`;
+    if (arduino.isConnected) arduino.sendCommand(fwCmd);
+    elapsed += cycleTime;
+
+    res.json(state);
+  });
+
+  app.post('/api/config', (req, res) => {
+    const updates = req.body;
+    if (updates.targetBottles !== undefined) {
+      state.process.targetBottles = updates.targetBottles;
+      saveConfig('targetBottles', updates.targetBottles.toString());
+    }
+    if (updates.fillWaitTime !== undefined) {
+      state.config.fillWaitTime = updates.fillWaitTime;
+      saveConfig('fillWaitTime', updates.fillWaitTime.toString());
+    }
+    if (updates.sensorTimeout !== undefined) {
+      state.config.sensorTimeout = updates.sensorTimeout;
+      saveConfig('sensorTimeout', updates.sensorTimeout.toString());
+    }
+    if (updates.dailyQuota !== undefined) {
+      state.config.dailyQuota = updates.dailyQuota;
+      saveConfig('dailyQuota', updates.dailyQuota.toString());
     }
     res.json(state);
   });
 
-  // ── Terminal ──────────────────────────────────────────────────────────────────
+  // ─── Dinamik Donanım Cihazları CRUD ───────────────────────────────────────────
+  app.post('/api/devices', (req, res) => {
+    if (state.systemRunning) return res.status(400).json({ error: 'Sistem çalışırken donanım eklenemez' });
+    
+    const dev: Device = req.body.device;
+    if (!dev || !dev.id) return res.status(400).json({ error: 'Geçersiz cihaz' });
+    
+    const idx = state.devices.findIndex(d => d.id === dev.id);
+    if (idx >= 0) state.devices[idx] = dev;
+    else state.devices.push(dev);
+    
+    saveDevice(dev);
+    setupGpioWatchers(); // Pinleri yeniden dinlemeye başla
+    
+    if (arduino.isConnected && dev.target === 'nano') {
+      const typeStr = dev.type === 'valve' || dev.type === 'motor' ? 'valve' : dev.type;
+      arduino.sendCommand(`PINCFG:${typeStr}:${dev.pin}`);
+    }
+    
+    res.json(state);
+  });
+
+  app.delete('/api/devices/:id', (req, res) => {
+    if (state.systemRunning) return res.status(400).json({ error: 'Sistem çalışırken donanım silinemez' });
+    
+    const id = req.params.id;
+    state.devices = state.devices.filter(d => d.id !== id);
+    deleteDevice(id);
+    setupGpioWatchers();
+    res.json(state);
+  });
+
+  app.post('/api/devices/:id/trigger', async (req, res) => {
+    const id = req.params.id;
+    const dev = state.devices.find(d => d.id === id);
+    if (!dev) return res.status(404).json({ error: 'Cihaz bulunamadı' });
+    
+    if (dev.target === 'nano') {
+       if (!arduino.isConnected) return res.status(400).json({ error: 'Nano bağlı değil' });
+       // Test için OPEN
+       await arduino.sendCommand(`OPEN:${dev.pin}`);
+       setTimeout(() => { arduino.sendCommand(`CLOSE:${dev.pin}`); }, 1000); // 1 sn sonra kapat testi
+    }
+    res.json({ success: true });
+  });
+
   app.post('/api/terminal', async (req, res) => {
     const { target, command } = req.body;
     let response = '';
-
     if (target === 'nano') {
-      if (!ARDUINO_SIMULATION && !arduino.isConnected) {
-        response = 'ERR: Arduino bağlı değil';
-      } else {
-        response = await arduino.sendCommand(command);
-      }
-    } else if (target === 'rpi') {
-      // RPi: basit komut simülasyonu (gerçek GPIO komutları buraya eklenebilir)
-      const cmd = command.toLowerCase().trim();
-      if      (cmd === 'status') response = `RPi: Çalışıyor | Heap: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB | PID: ${process.pid}`;
-      else if (cmd === 'ping')   response = 'pong';
-      else if (cmd === 'uptime') response = `Süreç: ${Math.round(process.uptime())}s`;
-      else                       response = `bash: ${command}: komut bulunamadı`;
+      if (!arduino.isConnected) response = 'ERR: Arduino bağlı değil';
+      else response = await arduino.sendCommand(command);
+    } else {
+      response = `bash: ${command}: komut bulunamadı`;
     }
-
     res.json({ response });
   });
 
-  // ── Donanım Konfigürasyonu ────────────────────────────────────────────────────
-  app.post('/api/hardware/config', (req, res) => {
-    const { target, config: cfg } = req.body;
-    if (target === 'rpi')  state.hardware.rpi  = { ...state.hardware.rpi,  ...cfg };
-    if (target === 'nano') state.hardware.nano = { ...state.hardware.nano, ...cfg };
-    res.json(state);
-  });
-
-  // ── Üretim Geçmişi ────────────────────────────────────────────────────────────
-  app.get('/api/history', (_req, res) => {
-    res.json(getProductionHistory(100));
-  });
-
-  // ── Alarm Kayıtları ───────────────────────────────────────────────────────────
-  app.get('/api/alarms', (_req, res) => {
-    res.json(getAlarms(100));
-  });
-
+  app.get('/api/history', (_req, res) => res.json(getProductionHistory(100)));
+  app.get('/api/alarms', (_req, res) => res.json(getAlarms(100)));
+  
   app.post('/api/alarms/:id/resolve', (req, res) => {
     resolveAlarm(parseInt(req.params.id));
     res.json({ ok: true });
   });
 
-  // ── Mevcut Serial Portlar ─────────────────────────────────────────────────────
   app.get('/api/hardware/ports', async (_req, res) => {
     const ports = await arduino.listPorts();
     res.json(ports);
   });
 
-  // ─── Özel Donanım (Custom Hardware) ──────────────────────────────────────────
-  app.post('/api/custom-hardware', (req, res) => {
-    const dev = req.body.device;
-    if (!dev || !dev.id) return res.status(400).json({ error: 'Geçersiz parametreler' });
-    const existing = state.customDevices.findIndex(d => d.id === dev.id);
-    if (existing >= 0) state.customDevices[existing] = dev;
-    else state.customDevices.push(dev);
-    saveCustomDevice(dev);
-    res.json(state);
-  });
-
-  app.delete('/api/custom-hardware/:id', (req, res) => {
-    const id = req.params.id;
-    state.customDevices = state.customDevices.filter(d => d.id !== id);
-    deleteCustomDevice(id);
-    res.json(state);
-  });
-
-  app.post('/api/custom-hardware/:id/send', async (req, res) => {
-    const id = req.params.id;
-    const dev = state.customDevices.find(d => d.id === id);
-    if (!dev) return res.status(404).json({ error: 'Donanım bulunamadı' });
-    if (!arduino.isConnected && !ARDUINO_SIMULATION) {
-      return res.status(400).json({ error: 'Arduino bağlı değil' });
-    }
-    const cmd = req.body.command || dev.command;
-    if (cmd) {
-      if (!ARDUINO_SIMULATION) await arduino.sendCommand(cmd);
-      else console.log(`[SIMULATION] Gönderildi: ${cmd}`);
-    }
-    res.json({ success: true, command: cmd });
-  });
-
-  // ─── Vite Entegrasyonu ────────────────────────────────────────────────────────
+  // Vite
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
     app.use(vite.middlewares);
@@ -579,10 +439,10 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n╔══════════════════════════════════╗`);
-    console.log(`║  GazozHMI Sunucu: http://localhost:${PORT}  ║`);
-    console.log(`║  Arduino: ${ARDUINO_SIMULATION ? 'SİMÜLASYON' : ARDUINO_PORT}${ARDUINO_SIMULATION ? '         ' : '       '}  ║`);
-    console.log(`╚══════════════════════════════════╝\n`);
+    console.log(`\n╔════════════════════════════════════════════════╗`);
+    console.log(`║  Palandöken Gazoz Master Sunucu: http://localhost:${PORT}  ║`);
+    console.log(`║  Sürücü: ${ARDUINO_PORT}                              ║`);
+    console.log(`╚════════════════════════════════════════════════╝\n`);
   });
 }
 

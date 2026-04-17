@@ -1,47 +1,18 @@
-import React, { useEffect, useRef, useState } from 'react';
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip as RechartsTooltip, ResponsiveContainer,
-} from 'recharts';
+import React, { useEffect, useState } from 'react';
 import {
   Activity, Settings, AlertTriangle, Droplet, Cpu, ScanLine,
-  Play, Square, Lock, Unlock, Timer, ToggleRight, ArrowRight,
-  ArrowLeft, Terminal, History, Bell, CheckCircle, RefreshCw,
-  Maximize2, Minimize2, PlusCircle, Trash2, Send, Watch, Link2
+  Play, Square, Lock, Unlock, Timer, Terminal, History, Bell,
+  PlusCircle, Trash2, Cpu as Microchip, LayoutDashboard, Map as MapIcon, RefreshCw, Layers
 } from 'lucide-react';
-import { SystemState, ProductionCycle, Alarm, CustomDevice } from './types';
+import { SystemState, Device } from './types';
 
-// ─── Ana Uygulama ─────────────────────────────────────────────────────────────
+// Design Tokens
+const RADIUS = "rounded-lg"; // 8px
+const OUTER_GAP = "p-[10px]"; // 10px
+
 export default function App() {
   const [state, setState] = useState<SystemState | null>(null);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'system'>('dashboard');
-  const [isFullscreen, setIsFullscreen] = useState(false);
-
-  // Tam ekran kontrolü
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {});
-    } else {
-      document.exitFullscreen().catch(() => {});
-    }
-  };
-
-  useEffect(() => {
-    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
-    document.addEventListener('fullscreenchange', onFsChange);
-    // İlk dokunuşta otomatik tam ekran (kiosk modu)
-    const autoFs = () => {
-      if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen().catch(() => {});
-      }
-      window.removeEventListener('pointerdown', autoFs);
-    };
-    window.addEventListener('pointerdown', autoFs);
-    return () => {
-      document.removeEventListener('fullscreenchange', onFsChange);
-      window.removeEventListener('pointerdown', autoFs);
-    };
-  }, []);
 
   useEffect(() => {
     const fetchState = async () => {
@@ -49,548 +20,305 @@ export default function App() {
         const res  = await fetch('/api/state');
         const data = await res.json();
         setState(data);
-      } catch (e) {
-        console.error('State fetch hatası', e);
-      }
+      } catch (e) { console.error('State fetch hatası', e); }
     };
     fetchState();
     const iv = setInterval(fetchState, 500);
     return () => clearInterval(iv);
   }, []);
 
-  const apiCall = async (endpoint: string, payload: Record<string, unknown>) => {
+  const apiCall = async (endpoint: string, payload: Record<string, unknown> = {}, method: string = 'POST') => {
     try {
       const res  = await fetch(endpoint, {
-        method:  'POST',
+        method,
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(payload),
+        body:    method !== 'GET' ? JSON.stringify(payload) : undefined,
       });
       const data = await res.json();
       if (!data.error) setState(data);
-    } catch (e) {
-      console.error(`API hatası: ${endpoint}`, e);
-    }
+    } catch (e) { console.error(`API hatası: ${endpoint}`, e); }
   };
 
-  if (!state) {
-    return (
-      <div className="flex flex-col items-center justify-center h-screen bg-gray-50 text-slate-500 gap-4">
-        <Droplet className="w-16 h-16 text-cyan-500 animate-pulse" />
-        <h1 className="text-2xl font-semibold text-slate-700">Sistem Başlatılıyor...</h1>
-      </div>
-    );
-  }
+  if (!state) return (
+    <div className="flex flex-col items-center justify-center h-screen bg-slate-50">
+      <RefreshCw className="w-12 h-12 animate-spin text-blue-500" />
+      <span className="text-[10px] font-bold text-slate-400 mt-4 tracking-[0.3em] uppercase">Sistem Yapılandırılıyor</span>
+    </div>
+  );
 
   return (
-    <div className="flex flex-col h-screen w-full bg-gray-50 text-slate-800 font-sans overflow-hidden select-none touch-manipulation">
+    <div className={`flex flex-col h-screen w-full bg-[#f1f5f9] font-sans overflow-hidden select-none ${OUTER_GAP}`}>
+      {/* ─── MAIN CONTAINER (8px Radius) ─── */}
+      <div className={`flex-1 flex flex-col bg-white shadow-2xl border border-slate-200 overflow-hidden ${RADIUS}`}>
+        
+        {/* ─── PREMIUM HEADER ─── */}
+        <header className="h-[70px] border-b border-slate-100 flex items-center justify-between px-6 shrink-0 bg-white/80 backdrop-blur-md z-20">
+          <div className="flex items-center gap-12">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-100">
+                <Droplet className="w-5 h-5 text-white" />
+              </div>
+              <div className="flex flex-col">
+                <span className="font-extrabold text-lg text-slate-800 tracking-tight leading-none uppercase">Palandöken Gazoz</span>
+              </div>
+            </div>
+            
+            <nav className="flex gap-1 h-full">
+              <TabLink active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard className="w-4 h-4" />} label="ANA PANEL" />
+              <TabLink active={activeTab === 'system'}    onClick={() => setActiveTab('system')} icon={<Settings className="w-4 h-4" />} label="AYARLAR" />
+            </nav>
+          </div>
 
-      {/* Üst Başlık */}
-      <header className="h-[68px] bg-white border-b border-gray-200 shadow-sm flex items-center justify-between px-4 shrink-0">
-        <div className="flex items-center gap-6">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-cyan-500 rounded-xl flex items-center justify-center shadow-sm">
-              <Droplet className="w-5 h-5 text-white" />
-            </div>
-            <div className="leading-tight">
-              <div className="font-black text-base text-slate-800 tracking-tight">GAZOZ DOLUM</div>
-              <div className="text-xs text-cyan-600 font-semibold">HMI v1.0</div>
-            </div>
-          </div>
-          <nav className="flex gap-1.5">
-            <TabButton active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')}
-              icon={<Activity className="w-4 h-4" />} label="Ana Ekran" />
-            <TabButton active={activeTab === 'system'}    onClick={() => setActiveTab('system')}
-              icon={<Settings className="w-4 h-4" />}  label="Sistem" />
-          </nav>
-        </div>
-
-        <div className="flex items-center gap-3">
-          {state.hasError && (
-            <div className="flex items-center gap-2 text-red-600 bg-red-50 px-3 py-1.5 rounded-lg border border-red-200 animate-pulse text-sm font-bold">
-              <AlertTriangle className="w-4 h-4" /> SİSTEM HATASI
-            </div>
-          )}
-          <div className={`flex items-center gap-2 text-sm font-semibold ${state.systemRunning ? 'text-emerald-600' : 'text-slate-400'}`}>
-            <div className={`w-2.5 h-2.5 rounded-full ${state.systemRunning ? 'bg-emerald-500 animate-pulse' : 'bg-gray-300'}`} />
-            <span className="hidden md:block">{state.systemRunning ? 'ÇALIŞIYOR' : 'BEKLEMEDE'}</span>
-          </div>
-
-          <button
-            onClick={toggleFullscreen}
-            className="p-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 active:scale-95 border border-gray-200 text-slate-500 transition-all min-h-[44px] min-w-[44px] flex items-center justify-center"
-            title={isFullscreen ? 'Tam Ekrandan Çık' : 'Tam Ekran'}
-          >
-            {isFullscreen ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
-          </button>
-
-          <button
-            onClick={() => apiCall('/api/system', { running: !state.systemRunning })}
-            disabled={state.emergencyStop}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm transition-all active:scale-95 min-h-[44px] border ${
-              state.emergencyStop
-                ? 'opacity-40 cursor-not-allowed bg-gray-100 text-gray-400 border-gray-200'
-                : state.systemRunning
-                  ? 'bg-amber-50 text-amber-700 hover:bg-amber-100 border-amber-300'
-                  : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border-emerald-300'
-            }`}
-          >
-            {state.systemRunning ? <Square className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current" />}
-            {state.systemRunning ? 'DURDUR' : 'BAŞLAT'}
-          </button>
-
-          <button
-            onClick={() => apiCall('/api/estop', { active: !state.emergencyStop })}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm transition-all active:scale-95 min-h-[44px] border-2 ${
-              state.emergencyStop
-                ? 'bg-red-600 text-white border-red-700 animate-pulse shadow-lg shadow-red-200'
-                : 'bg-red-50 text-red-600 border-red-300 hover:bg-red-100'
-            }`}
-          >
-            <AlertTriangle className="w-4 h-4" /> ACİL STOP
-          </button>
-        </div>
-      </header>
-
-      {/* Ana İçerik */}
-      <main className="flex-1 flex flex-col p-4 relative overflow-hidden">
-
-        {/* Acil Stop Overlay */}
-        {state.emergencyStop && (
-          <div className="absolute inset-0 z-50 bg-red-600/95 backdrop-blur-sm flex flex-col items-center justify-center gap-6">
-            <AlertTriangle className="w-28 h-28 text-white animate-bounce" />
-            <h1 className="text-5xl font-black text-white tracking-widest">ACİL STOP AKTİF</h1>
-            <p className="text-lg text-red-100">Tüm sistem durduruldu. Valfler ve motorlar kilitli.</p>
-            <button
-              onClick={() => apiCall('/api/estop', { active: false })}
-              className="mt-4 px-10 py-4 bg-white hover:bg-gray-100 active:scale-95 text-red-600 rounded-2xl font-bold text-xl border-2 border-white transition-all min-h-[60px] shadow-lg"
+            <SystemToggle 
+              running={state.systemRunning} 
+              disabled={state.emergencyStop || state.process.state === 'WASHING'} 
+              onClick={() => apiCall('/api/system', { running: !state.systemRunning })}
+            />
+            <button 
+              onClick={() => apiCall('/api/estop', { active: !state.emergencyStop })}
+              className={`h-11 px-6 ${RADIUS} font-bold text-xs border-2 transition-all flex items-center gap-2 ${
+                state.emergencyStop 
+                  ? 'bg-rose-500 text-white border-rose-600 animate-pulse' 
+                  : 'bg-rose-50 text-rose-600 border-rose-100 hover:bg-rose-100'
+              }`}
             >
-              SİSTEMİ SIFIRLA VE KİLİDİ AÇ
+              <AlertTriangle className="w-4 h-4" /> ACİL STOP
             </button>
           </div>
-        )}
+        </header>
 
-        {activeTab === 'dashboard' && <DashboardView state={state} apiCall={apiCall} />}
-        {activeTab === 'system'    && <SystemView    state={state} apiCall={apiCall} />}
-      </main>
+        {/* ─── CONTENT AREA ─── */}
+        <main className="flex-1 min-h-0 relative bg-[#fcfcfd]">
+          {state.emergencyStop && <EmergencyShutter onReset={() => apiCall('/api/estop', { active: false })} />}
+          
+          {activeTab === 'dashboard' && <DashboardView state={state} />}
+          {activeTab === 'system'    && <SettingsView  state={state} apiCall={apiCall} />}
+        </main>
+      </div>
     </div>
   );
 }
 
-// ─── Sekme Butonu ─────────────────────────────────────────────────────────────
-function TabButton({ active, onClick, icon, label }: {
-  active: boolean; onClick: () => void; icon: React.ReactNode; label: string;
-}) {
+// ─── UI COMPONENTS ───────────────────────────────────
+
+function TabLink({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: any, label: string; }) {
   return (
-    <button
-      onClick={onClick}
-      className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all font-semibold text-sm active:scale-95 min-h-[40px] border ${
-        active
-          ? 'bg-cyan-50 text-cyan-700 border-cyan-300 shadow-sm'
-          : 'text-slate-500 hover:bg-gray-100 border-transparent hover:border-gray-200'
+    <button onClick={onClick} className={`px-6 h-[70px] flex items-center gap-2 text-xs font-black tracking-widest transition-all relative ${active ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
+      {icon}<span>{label}</span>
+      {active && <div className="absolute bottom-0 left-4 right-4 h-1 bg-blue-500 rounded-t-full" />}
+    </button>
+  );
+}
+
+function SystemToggle({ running, disabled, onClick }: { running: boolean; disabled: boolean; onClick: () => void; }) {
+  return (
+    <button 
+      onClick={onClick} 
+      disabled={disabled}
+      className={`h-11 px-6 ${RADIUS} font-black text-xs flex items-center gap-3 transition-all shadow-md ${
+        disabled ? 'bg-slate-100 text-slate-300 pointer-events-none' :
+        running ? 'bg-amber-500 text-white shadow-amber-100 hover:bg-amber-600 active:scale-95' :
+                  'bg-emerald-500 text-white shadow-emerald-100 hover:bg-emerald-600 active:scale-95'
       }`}
     >
-      {icon}<span>{label}</span>
+      {running ? <Square className="w-3.5 h-3.5 fill-white" /> : <Play className="w-3.5 h-3.5 fill-white" />}
+      <span>{running ? 'HATTİ DURDUR' : 'ÜRETİME BAŞLA'}</span>
     </button>
   );
 }
 
-// ─── Ana Ekran ────────────────────────────────────────────────────────────────
-function DashboardView({ state, apiCall }: { state: SystemState; apiCall: (e: string, p: Record<string, unknown>) => void }) {
-  const processLabels: Record<string, { text: string; color: string; bg: string; border: string }> = {
-    WAITING_BOTTLES: { text: 'ŞİŞELER BEKLENİYOR',  color: 'text-blue-700',    bg: 'bg-blue-50',    border: 'border-blue-200' },
-    PRE_FILL_WAIT:   { text: 'DOLUM ÖNCESİ BEKLEME', color: 'text-amber-700',   bg: 'bg-amber-50',   border: 'border-amber-200' },
-    FILLING:         { text: 'DOLUM YAPILIYOR',        color: 'text-cyan-700',    bg: 'bg-cyan-50',    border: 'border-cyan-200' },
-    POST_FILL_WAIT:  { text: 'DOLUM SONRASI BEKLEME', color: 'text-purple-700',  bg: 'bg-purple-50',  border: 'border-purple-200' },
-    EXITING_BOTTLES: { text: 'ŞİŞELER ÇIKIYOR',       color: 'text-emerald-700', bg: 'bg-emerald-50', border: 'border-emerald-200' },
-  };
-  const proc = processLabels[state.process.state];
+// ─── DASHBOARD VIEW ──────────────────────────────────
+
+function DashboardView({ state }: { state: SystemState }) {
+  const [subTab, setSubTab] = useState<'visual' | 'map'>('visual');
+  const inSensor = state.devices.find(d => d.role === 'entry_laser');
+  const outSensor = state.devices.find(d => d.role === 'exit_laser');
 
   return (
-    <div className="flex-1 flex flex-col gap-4 min-h-0">
-      {/* Durum Kartları */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 shrink-0">
-        <StatusCard title="Süreç Durumu"         value={proc.text}
-          icon={<Activity className={`w-7 h-7 ${proc.color}`} />} color="blue"
-          customValueClass={`text-base font-bold font-mono ${proc.color}`} />
-        <StatusCard title="Dolum Alanındaki Şişe" value={`${state.process.bottlesInArea} / ${state.config.targetBottles}`}
-          icon={<Droplet className="w-7 h-7 text-cyan-600" />} color="cyan" />
-        <StatusCard title="Toplam Giren"          value={state.sensors[0].count.toString()}
-          icon={<ScanLine className="w-7 h-7 text-emerald-600" />} color="emerald" />
-        <StatusCard title="Toplam Çıkan"          value={state.sensors[1].count.toString()}
-          icon={<ScanLine className="w-7 h-7 text-purple-600" />} color="purple" />
+    <div className="h-full flex flex-col">
+      {/* ─── TOP ANALYTICS ─── */}
+      <div className="grid grid-cols-4 gap-3 p-4 bg-white border-b border-slate-100">
+        <AnalyticCard label="Hattın Mevcut Fazı" value={pStateMap[state.process.state]} icon={<Layers className="text-blue-500" />} />
+        <AnalyticCard label="Bölgedeki Ürün" value={`${state.process.bottlesInArea} / ${state.process.targetBottles}`} icon={<Droplet className="text-cyan-500" />} />
+        <AnalyticCard label="Toplam Giriş" value={inSensor?.count?.toString() || "0"} icon={<Activity className="text-emerald-500" />} />
+        <AnalyticCard label="Toplam Çıkış" value={outSensor?.count?.toString() || "0"} icon={<RefreshCw className="text-orange-500" />} />
       </div>
 
-      {/* Hat Görselleştirme */}
-      <div className="flex-1 min-h-0 bg-white border border-gray-200 rounded-2xl p-5 shadow-sm flex flex-col">
-        <h3 className="text-base font-semibold mb-4 flex items-center gap-2 text-slate-700">
-          <Activity className="w-5 h-5 text-slate-400" /> Hat Durumu
-        </h3>
-        <div className="flex-1 flex items-center justify-center bg-gray-50 rounded-xl border border-gray-200 relative overflow-hidden p-6">
-
-          {/* Konveyör Bandı */}
-          <div className="absolute bottom-8 left-8 right-8 h-4 bg-gray-200 rounded-full overflow-hidden shadow-inner">
-            <div
-              className={`h-full w-full bg-gray-300 ${state.motors[0].running ? 'animate-conveyor' : ''}`}
-              style={{ backgroundImage: 'repeating-linear-gradient(90deg, transparent, transparent 20px, rgba(0,0,0,0.08) 20px, rgba(0,0,0,0.08) 40px)' }}
-            />
-          </div>
-
-          <div className="w-full flex justify-between items-end pb-14 px-2 relative z-10">
-
-            {/* Giriş */}
-            <div className="flex flex-col items-center gap-2">
-              <span className="text-xs text-slate-500 font-semibold tracking-wide">GİRİŞ</span>
-              <div className={`w-4 h-14 rounded-t-md shadow-sm ${state.systemRunning ? 'bg-emerald-400' : 'bg-gray-300'}`} />
-              <div className="relative flex items-center justify-center">
-                {/* Giriş Lazer */}
-                <div className="absolute right-full mr-2 flex flex-col items-center bottom-0">
-                  <div className={`w-0.5 h-16 transition-colors ${state.sensors[0].active ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]' : 'bg-red-200'}`} />
-                  <div className="w-6 h-6 bg-white rounded border-2 border-gray-300 flex flex-col items-center justify-start pt-0.5 mt-1 shadow-sm">
-                    <div className={`w-1.5 h-1.5 rounded-full ${state.sensors[0].active ? 'bg-red-500' : 'bg-red-200'}`} />
-                    <span className="text-[9px] font-bold text-slate-400">S</span>
-                  </div>
-                </div>
-                {/* Giriş Kilidi */}
-                <div className={`w-12 h-14 border-2 rounded-xl flex flex-col items-center justify-center transition-colors shadow-sm ${state.locks.entry ? 'bg-red-50 border-red-400 text-red-600' : 'bg-emerald-50 border-emerald-400 text-emerald-600'}`}>
-                  {state.locks.entry ? <Lock className="w-5 h-5 mb-1" /> : <Unlock className="w-5 h-5 mb-1" />}
-                  <span className="text-[9px] font-bold">Kilit</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Dolum Alanı */}
-            <div className="flex flex-col items-center flex-1 px-6">
-              <div className="flex justify-between w-full mb-3 px-4">
-                {state.valves.map((v, i) => (
-                  <div key={i} className={`w-3 h-10 rounded-b-md transition-all ${v ? 'bg-cyan-500 shadow-[0_4px_12px_rgba(6,182,212,0.5)]' : 'bg-gray-200'}`} />
-                ))}
-              </div>
-              <div className="flex justify-between w-full px-2 h-14 items-end">
-                {Array.from({ length: 10 }).map((_, i) => (
-                  <div key={i} className={`w-5 transition-all duration-300 rounded-t-sm ${i < state.process.bottlesInArea ? 'h-11 bg-cyan-100 border-2 border-cyan-400' : 'h-0'}`}>
-                    <div className={`w-full bg-cyan-400 transition-all duration-1000 ${state.process.state === 'FILLING' && i < state.process.bottlesInArea ? 'h-full' : 'h-0'}`} />
-                  </div>
-                ))}
-              </div>
-              <div className="w-full h-7 border-t-4 border-gray-300 mt-1 flex items-center justify-center">
-                <span className="text-slate-400 font-bold text-xs">DOLUM ALANI (10 ŞİŞE)</span>
-              </div>
-            </div>
-
-            {/* Çıkış */}
-            <div className="flex flex-col items-center gap-2">
-              <span className="text-xs text-slate-500 font-semibold tracking-wide">ÇIKIŞ</span>
-              <div className={`w-4 h-14 rounded-t-md shadow-sm ${state.systemRunning ? 'bg-purple-400' : 'bg-gray-300'}`} />
-              <div className="relative flex items-center justify-center">
-                {/* Çıkış Kilidi */}
-                <div className={`w-12 h-14 border-2 rounded-xl flex flex-col items-center justify-center transition-colors shadow-sm ${state.locks.exit ? 'bg-red-50 border-red-400 text-red-600' : 'bg-emerald-50 border-emerald-400 text-emerald-600'}`}>
-                  {state.locks.exit ? <Lock className="w-5 h-5 mb-1" /> : <Unlock className="w-5 h-5 mb-1" />}
-                  <span className="text-[9px] font-bold">Kilit</span>
-                </div>
-                {/* Çıkış Lazer */}
-                <div className="absolute left-full ml-2 flex flex-col items-center bottom-0">
-                  <div className={`w-0.5 h-16 transition-colors ${state.sensors[1].active ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]' : 'bg-red-200'}`} />
-                  <div className="w-6 h-6 bg-white rounded border-2 border-gray-300 flex flex-col items-center justify-start pt-0.5 mt-1 shadow-sm">
-                    <div className={`w-1.5 h-1.5 rounded-full ${state.sensors[1].active ? 'bg-red-500' : 'bg-red-200'}`} />
-                    <span className="text-[9px] font-bold text-slate-400">S</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+      {/* ─── MAIN DISPLAY ─── */}
+      <div className="flex-1 flex flex-col min-h-0">
+        <div className="flex bg-white border-b border-slate-50">
+          <SubTab active={subTab === 'visual'} onClick={() => setSubTab('visual')} label="CANLI TEKNİK HAT DURUMU" />
+          <SubTab active={subTab === 'map'}    onClick={() => setSubTab('map')}    label="DONANIM ENVANTERİ" />
+        </div>
+        
+        <div className="flex-1 relative bg-slate-50/50">
+          {subTab === 'visual' ? <PremiumMimicDiagram state={state} /> : <HardwareList state={state} />}
         </div>
       </div>
     </div>
   );
 }
 
-// ─── Sistem Görünümü ─────────────────────────────────────────────────────────
-function SystemView({ state, apiCall }: { state: SystemState; apiCall: (e: string, p: Record<string, unknown>) => void }) {
-  const [sysTab, setSysTab] = useState<'settings' | 'hardware' | 'test' | 'rpi' | 'nano' | 'history' | 'alarms'>('settings');
-  const [hwTab,  setHwTab]  = useState<'sensors' | 'switches' | 'entry_lock' | 'exit_lock' | 'valves'>('sensors');
+const pStateMap: Record<string, string> = {
+  IDLE: 'Beklemede', WAITING_ENTRY: 'Giriş Sayımı', FILLING: 'Dolum Aktif', WAITING_EXIT: 'Çıkış Akışı', WASHING: 'CIP Yıkama'
+};
+
+function AnalyticCard({ label, value, icon }: { label: string; value: string; icon: any }) {
+  return (
+    <div className={`p-4 bg-slate-50/50 border border-slate-100 ${RADIUS} flex items-center justify-between`}>
+      <div className="flex flex-col">
+        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{label}</span>
+        <span className="text-2xl font-extrabold text-slate-800 font-mono tracking-tight">{value}</span>
+      </div>
+      <div className="p-3 bg-white rounded-lg shadow-sm border border-slate-100">{icon}</div>
+    </div>
+  );
+}
+
+function SubTab({ active, onClick, label }: { active: boolean; onClick: () => void; label: string; }) {
+  return (
+    <button onClick={onClick} className={`h-11 px-4 font-black text-[10px] tracking-widest transition-all relative ${active ? 'text-slate-900' : 'text-slate-300 hover:text-slate-500'}`}>
+      {label}
+      {active && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 rounded-full" />}
+    </button>
+  );
+}
+
+// ─── PREMIUM MIMIC DIAGRAM (The Masterpiece) ───
+
+function PremiumMimicDiagram({ state }: { state: SystemState }) {
+  const valves = state.devices.filter(d => d.type === 'valve').sort((a,b) => a.role.localeCompare(b.role));
+  const entryLock = state.devices.find(d => d.role === 'entry_lock');
+  const exitLock = state.devices.find(d => d.role === 'exit_lock');
+  const inSensor = state.devices.find(d => d.role === 'entry_laser');
+  const outSensor = state.devices.find(d => d.role === 'exit_laser');
 
   return (
-    <div className="flex-1 flex flex-col gap-4 min-h-0">
-      <div className="flex gap-1.5 border-b border-gray-200 pb-3 overflow-x-auto">
-        <TabButton active={sysTab === 'settings'} onClick={() => setSysTab('settings')} icon={<Settings className="w-4 h-4" />} label="Ayarlar" />
-        <TabButton active={sysTab === 'hardware'} onClick={() => setSysTab('hardware')} icon={<Cpu      className="w-4 h-4" />} label="Donanım" />
-        <TabButton active={sysTab === 'test'}     onClick={() => setSysTab('test')}     icon={<Activity className="w-4 h-4" />} label="Test" />
-        <TabButton active={sysTab === 'custom'}   onClick={() => setSysTab('custom')}   icon={<PlusCircle className="w-4 h-4" />} label="Ekstra Donanımlar" />
-        <TabButton active={sysTab === 'rpi'}      onClick={() => setSysTab('rpi')}      icon={<Terminal className="w-4 h-4" />} label="RPi" />
-        <TabButton active={sysTab === 'nano'}     onClick={() => setSysTab('nano')}     icon={<Terminal className="w-4 h-4" />} label="Nano" />
-        <TabButton active={sysTab === 'history'}  onClick={() => setSysTab('history')}  icon={<History  className="w-4 h-4" />} label="Geçmiş" />
-        <TabButton active={sysTab === 'alarms'}   onClick={() => setSysTab('alarms')}   icon={<Bell     className="w-4 h-4" />} label="Alarmlar" />
-      </div>
-
-      <div className="flex-1 min-h-0 overflow-y-auto">
-        {sysTab === 'settings' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
-              <h3 className="text-base font-semibold mb-5 flex items-center gap-2 text-slate-700">
-                <Timer className="w-5 h-5 text-slate-400" /> Zaman &amp; Hacim Ayarları
-              </h3>
-              <div className="flex flex-col gap-6">
-                <SliderField label="Dolum Öncesi Bekleme" value={state.config.fillWaitTime}
-                  unit="sn" min={1} max={10} step={1} color="amber"
-                  disabled={state.systemRunning}
-                  onChange={(v) => apiCall('/api/config', { fillWaitTime: v })} />
-                <SliderField label="Şişe Hacmi" value={state.config.syrupVolume}
-                  unit="ml" min={10} max={500} step={10} color="cyan"
-                  disabled={state.systemRunning}
-                  onChange={(v) => apiCall('/api/config', { syrupVolume: v })} />
+    <div className="absolute inset-0 flex flex-col items-center justify-center p-4 overflow-hidden">
+      
+      <div className="w-full flex flex-row h-[650px]">
+        
+        {/* LEFT PANEL: TANK AREA - 25% (Aligned to the far left with 30px gap) */}
+        <div className="w-1/4 h-full relative flex items-center justify-start pl-[30px]">
+           <div className="flex flex-col items-center scale-90 xxl:scale-100">
+              <div className="w-24 h-8 bg-slate-300 rounded-full border border-slate-400 mb-[-1px] z-10 shadow-sm" />
+              <div className="w-72 h-[450px] bg-gradient-to-r from-slate-400 via-slate-100 to-slate-400 border-x-4 border-slate-300 rounded-t-[50px] relative shadow-2xl overflow-hidden">
+                 <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.8),transparent_50%)]" />
+                 <div className="absolute bottom-12 right-8 w-6 h-[300px] bg-slate-800/20 rounded-full p-[4px] border border-white/10">
+                    <div className="w-full h-[65%] bg-gradient-to-t from-blue-500 to-blue-400 rounded-full shadow-[0_0_20px_rgba(59,130,246,0.6)] animate-pulse" />
+                 </div>
               </div>
-            </div>
+              <div className="flex gap-48 mt-[-1px]">
+                 <div className="w-8 h-24 bg-gradient-to-b from-slate-400 to-slate-600 rounded-b-2xl shadow-md" />
+                 <div className="w-8 h-24 bg-gradient-to-b from-slate-400 to-slate-600 rounded-b-2xl shadow-md" />
+              </div>
+              <div className="mt-8 px-10 py-4 bg-slate-900 text-white rounded-full text-xs font-black tracking-[0.3em] shadow-2xl border-2 border-slate-700">ŞERBET TANKI</div>
+           </div>
+        </div>
 
-            <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
-              <h3 className="text-base font-semibold mb-5 flex items-center gap-2 text-slate-700">
-                <Droplet className="w-5 h-5 text-slate-400" /> Valf Dolum Süreleri (sn)
-              </h3>
-              <div className="grid grid-cols-5 gap-2">
-                {state.config.valveFillTimes.map((time, idx) => {
-                  const isActive = state.config.activeValves ? state.config.activeValves[idx] : true;
-                  return (
-                    <div key={idx} className={`flex flex-col items-center p-2 rounded-xl border transition-colors ${isActive ? 'bg-gray-50 border-gray-200' : 'bg-red-50 border-red-200 opacity-60'}`}>
-                      <div className="flex justify-between w-full mb-1 px-1">
-                        <span className={`text-[10px] font-semibold ${isActive ? 'text-slate-500' : 'text-red-500'}`}>V{idx + 1}</span>
-                        <input type="checkbox" checked={isActive} disabled={state.systemRunning}
-                          onChange={(e) => {
-                            const active = state.config.activeValves ? [...state.config.activeValves] : Array(10).fill(true);
-                            active[idx] = e.target.checked;
-                            apiCall('/api/config', { activeValves: active });
-                          }}
-                          className="w-3.5 h-3.5 text-red-600 rounded cursor-pointer" />
-                      </div>
-                      <input
-                        type="number" min={0.5} max={30} step={0.5}
-                        value={time} disabled={state.systemRunning || !isActive}
-                        onChange={(e) => {
-                          const t = [...state.config.valveFillTimes];
-                          t[idx] = parseFloat(e.target.value) || 1;
-                          apiCall('/api/config', { valveFillTimes: t });
-                        }}
-                        className={`w-full text-center text-sm font-mono border rounded-lg p-1.5 focus:outline-none min-h-[40px] disabled:opacity-50 ${isActive ? 'bg-white text-cyan-700 border-gray-300 focus:border-cyan-400' : 'bg-red-100 text-red-700 border-red-300 cursor-not-allowed'}`}
-                      />
+        {/* RIGHT PANEL: PRODUCTION MACHINE - 75% */}
+        <div className="w-3/4 h-full relative flex items-center justify-center p-8">
+          
+          {/* Main Production Line Core (Vertical Stack) */}
+          <div className="flex flex-col items-center gap-6 w-full max-w-5xl relative translate-y-[-20px]">
+            
+            {/* 1. NOZZLE UNIT (Aligned perfectly above bottles) */}
+            <div className="w-full flex justify-around items-end gap-1 px-10 relative z-10 h-24">
+               {Array.from({length: state.process.targetBottles}).map((_, i) => (
+                 <div key={i} className="flex flex-col items-center">
+                    <div className="text-[7px] font-black text-slate-300 mb-1">UNIT-{i+1}</div>
+                    <div className={`w-10 h-16 border-2 transition-all duration-300 rounded-md shadow-md relative ${valves[i]?.active ? 'bg-blue-500 border-blue-600 shadow-blue-100 scale-105' : 'bg-white border-slate-100 opacity-60'}`}>
+                       {valves[i]?.active && (
+                         <div className="absolute top-full left-1/2 -translate-x-1/2 w-4 h-[100px] bg-gradient-to-b from-blue-400/60 to-transparent animate-pulse rounded-full z-10" />
+                       )}
                     </div>
-                  );
-                })}
-              </div>
+                 </div>
+               ))}
             </div>
-          </div>
-        )}
 
-        {sysTab === 'hardware' && (
-          <div className="flex flex-col gap-4">
-            <div className="flex gap-1.5 border-b border-gray-200 pb-3 overflow-x-auto">
-              <TabButton active={hwTab === 'sensors'}    onClick={() => setHwTab('sensors')}    icon={<ScanLine    className="w-4 h-4" />} label="Sensörler" />
-              <TabButton active={hwTab === 'switches'}   onClick={() => setHwTab('switches')}   icon={<ToggleRight className="w-4 h-4" />} label="Limit SW" />
-              <TabButton active={hwTab === 'entry_lock'} onClick={() => setHwTab('entry_lock')} icon={<Lock        className="w-4 h-4" />} label="Giriş Kilidi" />
-              <TabButton active={hwTab === 'exit_lock'}  onClick={() => setHwTab('exit_lock')}  icon={<Lock        className="w-4 h-4" />} label="Çıkış Kilidi" />
-              <TabButton active={hwTab === 'valves'}     onClick={() => setHwTab('valves')}     icon={<Droplet     className="w-4 h-4" />} label="Valfler" />
+            {/* 2. BOTTLES LAYER */}
+            <div className="w-full flex justify-around items-end gap-1 px-10 h-40 relative z-20">
+               {Array.from({length: state.process.targetBottles}).map((_, i) => (
+                 <div key={i} className={`w-18 h-36 border-2 transition-all duration-500 p-1 relative shadow-lg rounded-md ${i < state.process.bottlesInArea 
+                   ? 'bg-white border-slate-300 scale-100 opacity-100' 
+                   : 'bg-white/40 border-slate-200 scale-95 opacity-50'}`}>
+                    {/* Fluid Fill Visual */}
+                    {i < state.process.bottlesInArea && (
+                      <div className={`absolute bottom-1 left-1 right-1 bg-gradient-to-t from-emerald-500 to-emerald-400 rounded-sm transition-all duration-1000 ${RADIUS}`} 
+                           style={{ height: state.process.state === 'FILLING' ? '85%' : '15%' }} />
+                    )}
+                    <div className="absolute inset-0 border border-white/20 pointer-events-none rounded-md" />
+                 </div>
+               ))}
             </div>
-            {hwTab === 'sensors'    && <SensorsView      state={state} apiCall={apiCall} />}
-            {hwTab === 'switches'   && <LimitSwitchesView state={state} apiCall={apiCall} />}
-            {hwTab === 'entry_lock' && <SingleMotorView motor={state.motors[1]} dataKey="speed" color="#0891b2" apiCall={apiCall} state={state} />}
-            {hwTab === 'exit_lock'  && <SingleMotorView motor={state.motors[2]} dataKey="speed" color="#7c3aed" apiCall={apiCall} state={state} />}
-            {hwTab === 'valves'     && <ValvesView       state={state} apiCall={apiCall} />}
-          </div>
-        )}
 
-        {sysTab === 'test'    && <div className="grid grid-cols-1 lg:grid-cols-2 gap-4"><TestView state={state} apiCall={apiCall} /></div>}
-        {sysTab === 'custom'  && <CustomHardwareView state={state} apiCall={apiCall} />}
-        {sysTab === 'rpi'     && <HardwareTerminalView target="rpi"  title="Raspberry Pi"  state={state} apiCall={apiCall} />}
-        {sysTab === 'nano'    && <HardwareTerminalView target="nano" title="Arduino Nano"  state={state} apiCall={apiCall} />}
-        {sysTab === 'history' && <ProductionHistoryView />}
-        {sysTab === 'alarms'  && <AlarmsView />}
+            {/* 3. THE CONVEYOR & PILLARS UNIT (The Anchor) */}
+            <div className="w-full relative px-2">
+               {/* The Belt */}
+               <div className="w-full h-12 bg-gradient-to-r from-slate-700 via-slate-800 to-slate-700 border-y-2 border-slate-900 relative z-30 shadow-2xl flex items-center justify-center rounded-sm">
+                  <div className="h-0.5 w-full bg-white/5 absolute top-1/2 -translate-y-1/2" />
+               </div>
+
+               {/* Entry Unit (Left Support) */}
+               <div className="absolute left-[-24px] top-1/2 -translate-y-1/2 flex flex-col items-center z-40">
+                  <div className="flex items-center gap-2">
+                     <div className={`w-16 h-48 bg-slate-900 border-2 border-slate-950 flex flex-col items-center justify-center text-white/40 rounded-lg shadow-2xl`}>
+                       <span className="text-[10px] font-black">L-1</span>
+                     </div>
+                     <div className={`w-10 h-40 border-4 transition-all duration-500 shadow-2xl rounded-lg ${entryLock?.active ? 'bg-rose-500 border-rose-700 shadow-rose-200' : 'bg-emerald-500 border-emerald-700 shadow-emerald-200'}`} />
+                  </div>
+                  {/* Label below the unit */}
+                  <div className={`px-4 py-2 bg-white border border-slate-200 shadow-lg rounded-xl flex items-center gap-3 mt-8 whitespace-nowrap`}>
+                     <div className={`w-4 h-4 rounded-full border-2 ${inSensor?.active ? 'bg-rose-500 shadow-[0_0_8px_rose]' : 'bg-slate-200'}`} />
+                     <span className="text-[9px] font-black text-slate-800 uppercase tracking-tight">GİRİŞ ÜNİTESİ</span>
+                  </div>
+               </div>
+
+               {/* Exit Unit (Right Support) */}
+               <div className="absolute right-[-24px] top-1/2 -translate-y-1/2 flex flex-col items-center z-40">
+                  <div className="flex items-center gap-2">
+                     <div className={`w-10 h-40 border-4 transition-all duration-500 shadow-2xl rounded-lg ${exitLock?.active ? 'bg-rose-500 border-rose-700 shadow-rose-200' : 'bg-emerald-500 border-emerald-700 shadow-emerald-200'}`} />
+                     <div className={`w-16 h-48 bg-slate-900 border-2 border-slate-950 flex flex-col items-center justify-center text-white/40 rounded-lg shadow-2xl`}>
+                       <span className="text-[10px] font-black">L-2</span>
+                     </div>
+                  </div>
+                  {/* Label below the unit */}
+                  <div className={`px-4 py-2 bg-white border border-slate-200 shadow-lg rounded-xl flex items-center gap-3 mt-8 whitespace-nowrap`}>
+                     <span className="text-[9px] font-black text-slate-800 uppercase tracking-tight">ÇIKIŞ ÜNİTESİ</span>
+                     <div className={`w-4 h-4 rounded-full border-2 ${outSensor?.active ? 'bg-rose-500 shadow-[0_0_8px_rose]' : 'bg-slate-200'}`} />
+                  </div>
+               </div>
+            </div>
+
+          </div>
+        </div>
+
       </div>
+
     </div>
   );
 }
 
-// ─── Slider Alanı ─────────────────────────────────────────────────────────────
-function SliderField({ label, value, unit, min, max, step, color, disabled, onChange }: {
-  label: string; value: number; unit: string; min: number; max: number; step: number;
-  color: string; disabled: boolean; onChange: (v: number) => void;
-}) {
-  const accentMap: Record<string, string> = { amber: 'accent-amber-500', cyan: 'accent-cyan-500', emerald: 'accent-emerald-500' };
-  const valueColorMap: Record<string, string> = { amber: 'text-amber-600', cyan: 'text-cyan-600', emerald: 'text-emerald-600' };
+// ─── HARDWARE LIST ──────────────────────────────────
+
+function HardwareList({ state }: { state: SystemState }) {
   return (
-    <div>
-      <div className="flex justify-between items-end mb-2">
-        <label className="text-sm font-medium text-slate-600">{label}</label>
-        <span className={`text-lg font-mono font-bold ${valueColorMap[color] || 'text-slate-700'}`}>{value} {unit}</span>
-      </div>
-      <input type="range" min={min} max={max} step={step} value={value} disabled={disabled}
-        onChange={(e) => onChange(parseFloat(e.target.value))}
-        className={`w-full h-2 bg-gray-200 rounded-full appearance-none cursor-pointer ${accentMap[color] || 'accent-cyan-500'} disabled:opacity-40`}
-      />
-    </div>
-  );
-}
-
-// ─── Test Görünümü ────────────────────────────────────────────────────────────
-function TestView({ state, apiCall }: { state: SystemState; apiCall: (e: string, p: Record<string, unknown>) => void }) {
-  return (
-    <>
-      <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
-        <h3 className="text-base font-semibold mb-5 flex items-center gap-2 text-slate-700">
-          <Lock className="w-5 h-5 text-slate-400" /> Kilit Testi
-        </h3>
-        <div className="flex gap-3">
-          {(['entry', 'exit'] as const).map((t) => (
-            <button key={t}
-              onClick={() => apiCall('/api/locks/toggle', { type: t, open: state.locks[t] })}
-              disabled={state.systemRunning}
-              className="flex-1 p-4 bg-gray-50 border border-gray-200 rounded-xl hover:bg-gray-100 active:scale-95 transition-all disabled:opacity-40 flex flex-col items-center gap-2 min-h-[80px] shadow-sm"
-            >
-              <span className="font-semibold text-slate-700">{t === 'entry' ? 'Giriş' : 'Çıkış'} Kilidi</span>
-              <span className={`text-xs px-2 py-1 rounded-lg font-bold border ${state.locks[t] ? 'bg-red-50 text-red-600 border-red-200' : 'bg-emerald-50 text-emerald-600 border-emerald-200'}`}>
-                {state.locks[t] ? 'KAPALI' : 'AÇIK'}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
-        <h3 className="text-base font-semibold mb-5 flex items-center gap-2 text-slate-700">
-          <Droplet className="w-5 h-5 text-slate-400" /> Valf Dolum Süresi Testi
-        </h3>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          {state.valves.map((isActive, idx) => (
-            <button key={idx}
-              onClick={() => apiCall('/api/valves/test', { index: idx })}
-              disabled={state.systemRunning || isActive}
-              className={`p-3 rounded-xl border transition-all active:scale-95 flex flex-col items-center gap-1.5 min-h-[68px] shadow-sm ${isActive ? 'bg-cyan-50 border-cyan-300 text-cyan-700' : 'bg-gray-50 border-gray-200 hover:border-gray-300 text-slate-700'} disabled:opacity-40`}
-            >
-              <span className="font-bold text-sm">V{idx + 1} Test</span>
-              <span className="text-xs text-slate-400">{state.config.valveFillTimes[idx]} sn</span>
-            </button>
-          ))}
-        </div>
-      </div>
-    </>
-  );
-}
-
-// ─── Tekli Motor Görünümü ─────────────────────────────────────────────────────
-function SingleMotorView({ motor, dataKey, color, apiCall, state }: {
-  motor: SystemState['motors'][0]; dataKey: string; color: string;
-  apiCall: (e: string, p: Record<string, unknown>) => void; state: SystemState;
-}) {
-  const [history, setHistory] = useState<{ time: string; speed: number }[]>([]);
-  const motorRef = useRef(motor);
-  useEffect(() => { motorRef.current = motor; }, [motor]);
-
-  useEffect(() => {
-    const iv = setInterval(() => {
-      const m = motorRef.current;
-      const timeStr = new Date().toLocaleTimeString('tr-TR');
-      setHistory(prev => {
-        const next = [...prev, { time: timeStr, speed: m.running ? m.speed : 0 }];
-        if (next.length > 120) next.shift();
-        return next;
-      });
-    }, 500);
-    return () => clearInterval(iv);
-  }, []);
-
-  const fmtTime = (s: number) =>
-    `${Math.floor(s / 3600).toString().padStart(2, '0')}:${Math.floor((s % 3600) / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
-
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      <div className="bg-white border border-gray-200 rounded-2xl p-6 flex flex-col gap-5 shadow-sm">
-        <div className="flex justify-between items-start">
-          <div className="flex items-center gap-4">
-            <div className={`p-3 rounded-xl ${motor.running ? 'bg-purple-100 text-purple-600' : 'bg-gray-100 text-gray-400'}`}>
-              <Cpu className="w-7 h-7" />
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-slate-800">{motor.name}</h3>
-              <p className="text-slate-500 font-mono text-sm mt-0.5">
-                Step Motor · <span className="text-purple-600">{fmtTime(motor.runningTime || 0)}</span>
-              </p>
-            </div>
-          </div>
-          <div className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${motor.running ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}>
-            {motor.running ? 'ÇALIŞIYOR' : 'DURDU'}
-          </div>
-        </div>
-
-        <div>
-          <div className="flex justify-between items-end mb-2">
-            <label className="text-sm font-medium text-slate-600">Motor Hızı</label>
-            <span className="text-xl font-mono font-bold text-cyan-600">{motor.speed}%</span>
-          </div>
-          <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden border border-gray-200">
-            <div className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-300 rounded-full" style={{ width: `${motor.speed}%` }} />
-          </div>
-        </div>
-
-        {motor.steps !== undefined && (
-          <SliderField label="Adım (Step) Ayarı" value={motor.steps} unit="Adım"
-            min={50} max={1000} step={10} color="amber" disabled={state.systemRunning}
-            onChange={(v) => apiCall(`/api/motors/${motor.id}`, { steps: v })} />
-        )}
-
-        <div>
-          <label className="text-sm font-medium text-slate-600 mb-2 block">Dönüş Yönü</label>
-          <div className="flex gap-2">
-            {(['forward', 'reverse'] as const).map((dir) => (
-              <div key={dir} className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border text-sm font-bold min-h-[44px] ${motor.direction === dir ? 'bg-cyan-50 border-cyan-300 text-cyan-700' : 'bg-gray-50 border-gray-200 text-slate-400'}`}>
-                {dir === 'forward' ? <ArrowRight className="w-4 h-4" /> : <ArrowLeft className="w-4 h-4" />}
-                {dir === 'forward' ? 'İLERİ (AÇ)' : 'GERİ (KAPAT)'}
+    <div className="absolute inset-0 p-8 overflow-y-auto">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+        {state.devices.map(dev => (
+          <div key={dev.id} className={`p-5 bg-white border transition-all duration-300 shadow-sm group ${RADIUS} ${dev.active ? 'border-blue-500 shadow-blue-50' : 'border-slate-100 hover:border-slate-300'}`}>
+            <div className="flex justify-between items-center mb-4">
+              <div className={`p-2 rounded-lg ${dev.active ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'bg-slate-50 text-slate-300'}`}>
+                {dev.type === 'valve' ? <Droplet className="w-5 h-5" /> : <Microchip className="w-5 h-5" />}
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-white border border-gray-200 rounded-2xl p-6 h-[340px] flex flex-col shadow-sm">
-        <h3 className="text-base font-semibold mb-4 flex items-center gap-2 text-slate-700">
-          <Activity className="w-5 h-5 text-slate-400" /> Hız Grafiği (Son 1 Dk)
-        </h3>
-        <div className="flex-1 min-h-0">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={history} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-              <XAxis dataKey="time" stroke="#94a3b8" fontSize={11} tickMargin={8} minTickGap={30} />
-              <YAxis stroke="#94a3b8" fontSize={11} domain={[0, 100]} />
-              <RechartsTooltip contentStyle={{ backgroundColor: '#fff', borderColor: '#e2e8f0', borderRadius: '0.5rem', color: '#1e293b' }} />
-              <Line type="monotone" dataKey="speed" name={motor.name} stroke={color} strokeWidth={2} dot={false} isAnimationActive={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Sensör Görünümü ──────────────────────────────────────────────────────────
-function SensorsView({ state, apiCall }: { state: SystemState; apiCall: (e: string, p: Record<string, unknown>) => void }) {
-  return (
-    <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
-      <h3 className="text-base font-semibold mb-5 flex items-center gap-2 text-slate-700">
-        <ScanLine className="w-5 h-5 text-slate-400" /> Lazer Sensörler
-      </h3>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {state.sensors.map((sensor) => (
-          <div key={sensor.id} className={`flex flex-col gap-4 p-5 rounded-xl border transition-colors ${sensor.active ? 'bg-emerald-50 border-emerald-200' : 'bg-gray-50 border-gray-200'}`}>
-            <div className="flex justify-between items-start">
-              <div>
-                <span className="text-sm font-medium text-slate-600">{sensor.name}</span>
-                <span className="text-3xl font-bold font-mono text-slate-800 mt-1 block">{sensor.count}</span>
-              </div>
-              <div className={`w-4 h-4 rounded-full ${sensor.active ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]' : 'bg-gray-300'}`} />
+              <div className={`w-3 h-3 rounded-full ${dev.active ? 'bg-emerald-500 animate-pulse shadow-[0_0_8px_emerald]' : 'bg-slate-100'}`} />
             </div>
-            <div className="pt-4 border-t border-gray-200">
-              <button
-                onClick={() => apiCall('/api/sensors/toggle', { id: sensor.id, blocked: !sensor.blocked })}
-                disabled={state.systemRunning}
-                className={`w-full py-2.5 rounded-xl border transition-all active:scale-95 text-sm font-bold flex items-center justify-center gap-2 min-h-[44px] disabled:opacity-40 ${sensor.blocked ? 'bg-emerald-50 border-emerald-300 text-emerald-700 hover:bg-emerald-100' : 'bg-white border-gray-300 text-slate-600 hover:bg-gray-50'}`}
-              >
-                {sensor.blocked ? 'ENGELİ KALDIR' : 'ENGEL KOY (TEST)'}
-              </button>
+            <div className="text-[9px] font-bold text-slate-400 uppercase mb-0.5 tracking-widest">{dev.role}</div>
+            <div className="text-sm font-black text-slate-800 leading-none h-8 flex items-center uppercase">{dev.name}</div>
+            <div className="mt-4 pt-3 border-t border-slate-50 flex justify-between text-[10px] font-black">
+              <span className="text-slate-300 italic">@{dev.target.toUpperCase()}</span>
+              <span className="bg-slate-50 px-2 py-0.5 rounded text-blue-500">{dev.pin}</span>
             </div>
           </div>
         ))}
@@ -599,528 +327,186 @@ function SensorsView({ state, apiCall }: { state: SystemState; apiCall: (e: stri
   );
 }
 
-// ─── Limit Switch Görünümü ────────────────────────────────────────────────────
-function LimitSwitchesView({ state }: { state: SystemState; apiCall: (e: string, p: Record<string, unknown>) => void }) {
+// ─── SETTINGS VIEW ──────────────────────────────────
+
+function SettingsView({ state, apiCall }: { state: SystemState; apiCall: any }) {
+  const [activeSub, setActiveSub] = useState<'inventory' | 'process'>('inventory');
+
   return (
-    <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
-      <h3 className="text-base font-semibold mb-5 flex items-center gap-2 text-slate-700">
-        <ToggleRight className="w-5 h-5 text-slate-400" /> Limit Switchler
-      </h3>
-      <div className="flex flex-col gap-3">
-        {state.limitSwitches.map((ls) => (
-          <div key={ls.id} className="flex items-center justify-between p-4 bg-gray-50 border border-gray-200 rounded-xl min-h-[60px]">
-            <div>
-              <span className="text-sm font-medium text-slate-700">{ls.name}</span>
-              <span className="text-xs text-slate-400 font-mono block mt-0.5">{ls.id}</span>
-            </div>
-            <div className={`px-3 py-1.5 rounded-full text-xs font-bold border ${ls.active ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-gray-100 text-gray-400 border-gray-200'}`}>
-              {ls.active ? 'AKTİF' : 'PASİF'}
-            </div>
-          </div>
-        ))}
+    <div className="h-full flex flex-col">
+      <div className="flex px-10 border-b border-slate-100 shrink-0 bg-white mt-2">
+        <MainTabButton active={activeSub === 'inventory'} onClick={() => setActiveSub('inventory')} label="DONANIM ENVANTER PLANI" />
+        <MainTabButton active={activeSub === 'process'}   onClick={() => setActiveSub('process')}   label="ÜRETİM PARAMETRE AYARLARI" />
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-10 bg-white">
+        {activeSub === 'inventory' ? <HardwareInventoryView state={state} apiCall={apiCall} /> : <ProcessSettingsView state={state} apiCall={apiCall} />}
       </div>
     </div>
   );
 }
 
-// ─── Valf Görünümü ────────────────────────────────────────────────────────────
-function ValvesView({ state, apiCall }: { state: SystemState; apiCall: (e: string, p: Record<string, unknown>) => void }) {
-  const [simTime, setSimTime] = useState<number>(Date.now());
-  useEffect(() => {
-    const iv = setInterval(() => setSimTime(Date.now()), 100);
-    return () => clearInterval(iv);
-  }, []);
-
+function MainTabButton({ active, onClick, label }: { active: boolean; onClick: () => void; label: string; }) {
   return (
-    <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
-      <div className="flex justify-between items-center mb-5">
-        <h3 className="text-base font-semibold flex items-center gap-2 text-slate-700">
-          <Droplet className="w-5 h-5 text-slate-400" /> Selenoid Valf Kontrolü
-        </h3>
-        <span className="text-slate-500 bg-gray-50 px-3 py-1.5 rounded-lg font-mono border border-gray-200 text-sm">10 Valf</span>
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        {state.valves.map((isActive, idx) => (
-          <ValveButton key={idx} isActive={isActive} index={idx}
-            disabled={state.emergencyStop || (state.config.activeValves && !state.config.activeValves[idx])} simTime={simTime}
-            isBroken={state.config.activeValves && !state.config.activeValves[idx]}
-            onClick={() => apiCall(`/api/valves/${idx}`, { active: !isActive })} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-interface ValveButtonProps { key?: React.Key; isActive: boolean; index: number; disabled: boolean; simTime: number; onClick: () => void; isBroken?: boolean; }
-function ValveButton({ isActive, index, disabled, simTime, onClick, isBroken }: ValveButtonProps) {
-  const noiseRef = useRef(Math.random() * 0.8);
-  const flowRate = isActive ? 45 + Math.sin(simTime / 500 + index) * 2 + noiseRef.current : 0;
-
-  return (
-    <button
-      title={isBroken ? `Valf ${index + 1}: ARIZALI/İPTAL` : `Valf ${index + 1}: ${isActive ? 'Açık' : 'Kapalı'}`}
-      disabled={disabled || isBroken}
-      onClick={onClick}
-      className={`relative flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all active:scale-95 min-h-[110px] shadow-sm ${disabled || isBroken ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} ${isBroken ? 'bg-red-50 border-red-200' : isActive ? 'bg-cyan-50 border-cyan-400 shadow-cyan-100' : 'bg-gray-50 border-gray-200 hover:border-gray-300 hover:bg-white'}`}
-    >
-      <div className={`absolute top-2.5 right-2.5 w-2 h-2 rounded-full ${isBroken ? 'bg-red-500' : isActive ? 'bg-cyan-500 shadow-[0_0_6px_rgba(6,182,212,0.8)]' : 'bg-gray-300'}`} />
-      {isBroken && <div className="absolute top-2.5 left-2.5 text-[9px] font-bold text-red-600 bg-red-100 px-1 rounded border border-red-200">İPTAL</div>}
-      <Droplet className={`w-7 h-7 mb-1.5 ${isBroken ? 'text-red-400' : isActive ? 'text-cyan-500' : 'text-gray-300'}`} />
-      <span className={`font-bold text-sm ${isBroken ? 'text-red-600 line-through' : isActive ? 'text-cyan-700' : 'text-slate-600'}`}>VALF {index + 1}</span>
-      <div className={`mt-1.5 flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border ${isBroken ? 'bg-red-100 text-red-600 border-red-200' : isActive ? 'bg-cyan-100 text-cyan-700 border-cyan-300' : 'bg-gray-100 text-gray-400 border-gray-200'}`}>
-        <div className={`w-1.5 h-1.5 rounded-full ${isBroken ? 'bg-red-500' : isActive ? 'bg-cyan-500 animate-pulse' : 'bg-gray-300'}`} />
-        {isBroken ? 'İPTAL EDİLDİ' : isActive ? 'AÇIK' : 'KAPALI'}
-      </div>
-      {isActive && !isBroken && (
-        <div className="mt-1.5 text-[10px] font-mono text-cyan-700 bg-cyan-50 px-2 py-0.5 rounded border border-cyan-200 flex items-center gap-1">
-          <Activity className="w-3 h-3" />
-          {flowRate.toFixed(1)} L/dk
-        </div>
-      )}
+    <button onClick={onClick} className={`px-8 h-12 flex items-center text-[10px] font-black tracking-[0.2em] transition-all relative ${active ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
+      {label}
+      <div className={`absolute bottom-0 left-8 right-8 h-0.5 bg-blue-600 rounded-full transition-all ${active ? 'opacity-100 scale-x-100' : 'opacity-0 scale-x-0'}`} />
     </button>
   );
 }
 
-// ─── Durum Kartı ──────────────────────────────────────────────────────────────
-function StatusCard({ title, value, icon, color, customValueClass }: {
-  title: string; value: string; icon: React.ReactNode; color: string; customValueClass?: string;
-}) {
-  const colors: Record<string, string> = {
-    blue:    'bg-blue-50 border-blue-200',
-    purple:  'bg-purple-50 border-purple-200',
-    emerald: 'bg-emerald-50 border-emerald-200',
-    cyan:    'bg-cyan-50 border-cyan-200',
-  };
+function ProcessSettingsView({ state, apiCall }: { state: SystemState; apiCall: any }) {
   return (
-    <div className={`p-5 rounded-2xl border ${colors[color] || 'bg-gray-50 border-gray-200'} flex items-center justify-between min-h-[88px] shadow-sm`}>
-      <div>
-        <div className="text-slate-500 text-xs font-semibold mb-1">{title}</div>
-        <div className={customValueClass || 'text-2xl font-bold font-mono text-slate-800'}>{value}</div>
+    <div className="flex flex-col gap-12 max-w-5xl">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+        <InputComponent label="Hattaki Hedef Şişe Adedi" value={state.process.targetBottles} unit="ADET" onChange={v => apiCall('/api/config', { targetBottles: v })} disabled={state.systemRunning} />
+        <InputComponent label="Kanal Dolum Bekleme Süresi" value={state.config.fillWaitTime} unit="MS" onChange={v => apiCall('/api/config', { fillWaitTime: v })} disabled={state.systemRunning} />
+        <InputComponent label="Lazer Sensör Zaman Aşımı" value={state.config.sensorTimeout} unit="MS" onChange={v => apiCall('/api/config', { sensorTimeout: v })} disabled={state.systemRunning} />
+        <InputComponent label="Vardiya Başı Üretim Kotası" value={state.config.dailyQuota} unit="ŞİŞE" onChange={v => apiCall('/api/config', { dailyQuota: v })} disabled={state.systemRunning} />
       </div>
-      <div className="p-2.5 bg-white rounded-xl shadow-sm">{icon}</div>
+
+      <div className={`p-10 bg-slate-50 border border-slate-100 ${RADIUS} relative overflow-hidden group`}>
+        <div className="flex items-center gap-3 mb-8">
+          <div className={`w-2 h-6 bg-blue-500 ${RADIUS}`} />
+          <h4 className="text-[11px] font-black text-slate-800 tracking-widest uppercase">OTOMATİK YIKAMA (CIP) RUTİNLERİ</h4>
+        </div>
+        <div className="flex gap-6 relative z-10">
+          <WashActionBtn label="SABAH AÇILIŞ RÜTİNİ" sub="60 SN / Hızlı Yıkama" onClick={() => apiCall('/api/wash', { duration: 60000 })} disabled={state.systemRunning || state.process.state === 'WASHING'} />
+          <WashActionBtn label="AKŞAM KAPANIŞ RÜTİNİ" sub="300 SN / Yoğun Deşarj" onClick={() => apiCall('/api/wash', { duration: 300000 })} disabled={state.systemRunning || state.process.state === 'WASHING'} />
+        </div>
+        {state.process.state === 'WASHING' && (
+          <div className="absolute inset-0 bg-blue-600/90 backdrop-blur-sm flex flex-col items-center justify-center text-white gap-4 pointer-events-auto">
+            <RefreshCw className="w-10 h-10 animate-spin" />
+            <span className="text-2xl font-black tracking-[0.3em] uppercase italic">CIP RUTİNİ İŞLENMEKTE...</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-// ─── Donanım Terminal ─────────────────────────────────────────────────────────
-function HardwareTerminalView({ target, title, state, apiCall }: {
-  target: 'rpi' | 'nano'; title: string; state: SystemState;
-  apiCall: (e: string, p: Record<string, unknown>) => void;
-}) {
-  const [logs, setLogs] = useState<{ time: string; type: 'in' | 'out' | 'info'; text: string }[]>([
-    { time: new Date().toLocaleTimeString('tr-TR'), type: 'info', text: `${title} terminaline bağlandı...` },
-  ]);
-  const [input, setInput] = useState('');
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const hwState = state.hardware?.[target] || { connected: false, port: '', status: 'Bilinmiyor', baudRate: 9600, simulated: false };
+function InputComponent({ label, value, unit, onChange, disabled }: { label: string; value: number; unit: string; onChange: (v: number) => void; disabled: boolean }) {
+  return (
+    <div className="flex flex-col gap-3">
+      <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest leading-none">{label}</label>
+      <div className="relative">
+        <input type="number" disabled={disabled} value={value} onChange={e => onChange(parseInt(e.target.value)||0)}
+          className={`w-full h-16 bg-white border-2 border-slate-100 p-5 font-mono font-black text-3xl text-slate-800 outline-none focus:border-blue-500 transition-all ${RADIUS} disabled:opacity-40 shadow-sm`} />
+        <span className="absolute right-6 top-1/2 -translate-y-1/2 text-[10px] font-black text-blue-500 uppercase tracking-tighter">{unit}</span>
+      </div>
+    </div>
+  );
+}
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs]);
+function WashActionBtn({ label, sub, onClick, disabled }: { label: string; sub: string; onClick: () => void; disabled: boolean }) {
+  return (
+    <button onClick={onClick} disabled={disabled} className={`flex-1 h-32 bg-white border-2 border-slate-100 p-6 flex flex-col items-center justify-center transition-all shadow-sm ${RADIUS} hover:border-slate-800 active:scale-95 disabled:opacity-30 group`}>
+      <span className="text-lg font-black text-slate-800 group-hover:text-blue-600 transition-colors uppercase leading-none mb-2">{label}</span>
+      <span className="text-[11px] font-bold text-slate-400 uppercase tracking-tight">{sub}</span>
+    </button>
+  );
+}
 
-  const handleSend = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim()) return;
-    const cmd = input.trim();
-    setInput('');
-    setLogs(prev => [...prev, { time: new Date().toLocaleTimeString('tr-TR'), type: 'out', text: cmd }]);
-    try {
-      const res  = await fetch('/api/terminal', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target, command: cmd }),
-      });
-      const data = await res.json();
-      if (data.response) {
-        setLogs(prev => [...prev, { time: new Date().toLocaleTimeString('tr-TR'), type: 'in', text: data.response }]);
-      }
-    } catch {
-      setLogs(prev => [...prev, { time: new Date().toLocaleTimeString('tr-TR'), type: 'info', text: 'Hata: Komut gönderilemedi.' }]);
-    }
-  };
+// ─── HARDWARE INVENTORY VIEW ───
+
+function HardwareInventoryView({ state, apiCall }: { state: SystemState; apiCall: any }) {
+  const [isAdding, setIsAdding] = useState(false);
+  const [form, setForm] = useState<Partial<Device>>({ type: 'valve', target: 'nano', role: 'none', pin: '', name: '' });
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-[520px]">
-      <div className="col-span-1 bg-white border border-gray-200 rounded-2xl p-5 flex flex-col gap-4 shadow-sm">
-        <h3 className="text-base font-semibold flex items-center gap-2 text-slate-700">
-          <Settings className="w-5 h-5 text-slate-400" /> Bağlantı
-        </h3>
-        <div className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-200">
-          <span className="text-slate-500 text-sm">Durum</span>
-          <div className="flex items-center gap-2">
-            <div className={`w-2.5 h-2.5 rounded-full ${hwState.connected ? 'bg-emerald-500 animate-pulse' : 'bg-red-400'}`} />
-            <span className={`font-bold text-sm ${hwState.connected ? 'text-emerald-600' : 'text-red-500'}`}>
-              {hwState.connected ? 'BAĞLI' : 'KOPUK'}
-            </span>
-          </div>
+    <div className="flex flex-col gap-10">
+      <div className="flex justify-between items-center bg-slate-50 p-6 border border-slate-100 ${RADIUS}">
+        <div className="flex flex-col">
+          <h4 className="text-sm font-black text-slate-800 tracking-widest uppercase">ENVANTER KAYIT DEFTERİ</h4>
+          <span className="text-[10px] font-bold text-slate-400 mt-1 uppercase italic">{state.devices.length} Birim Sisteme Bağlı</span>
         </div>
-        {'simulated' in hwState && hwState.simulated && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-amber-700 text-xs font-bold text-center">
-            SİMÜLASYON MODU
-          </div>
-        )}
-        <div>
-          <label className="text-xs font-semibold text-slate-500 mb-1.5 block">Port</label>
-          <input type="text" value={hwState.port}
-            onChange={(e) => apiCall('/api/hardware/config', { target, config: { port: e.target.value } })}
-            className="w-full bg-gray-50 border border-gray-300 rounded-xl px-3 py-2.5 text-slate-700 font-mono text-sm focus:outline-none focus:border-cyan-400 min-h-[44px]"
-            placeholder={target === 'nano' ? '/dev/ttyUSB0' : 'GPIO'}
-          />
-        </div>
-        {target === 'nano' && (
-          <div>
-            <label className="text-xs font-semibold text-slate-500 mb-1.5 block">Baud Rate</label>
-            <select value={'baudRate' in hwState ? hwState.baudRate : 9600}
-              onChange={(e) => apiCall('/api/hardware/config', { target, config: { baudRate: parseInt(e.target.value) } })}
-              className="w-full bg-gray-50 border border-gray-300 rounded-xl px-3 py-2.5 text-slate-700 font-mono text-sm focus:outline-none focus:border-cyan-400 min-h-[44px]"
-            >
-              {[9600, 19200, 38400, 57600, 115200].map(b => <option key={b} value={b}>{b}</option>)}
+        <button onClick={() => setIsAdding(true)} disabled={state.systemRunning} className={`h-12 px-10 bg-slate-900 text-white font-black text-xs uppercase shadow-xl hover:bg-slate-800 active:scale-95 transition-all ${RADIUS} disabled:opacity-30`}>
+          YENİ BİRİM TANIMLA
+        </button>
+      </div>
+
+      {isAdding && (
+        <div className={`bg-white border-2 border-slate-800 p-10 grid grid-cols-1 md:grid-cols-3 gap-8 shadow-2xl relative ${RADIUS} animate-in fade-in slide-in-from-top-4 duration-300`}>
+          <FormGroup label="Birim Tipi">
+            <select className="w-full h-14 border-2 border-slate-100 bg-slate-50 p-4 text-sm font-black outline-none focus:border-blue-500 ${RADIUS}" value={form.type} onChange={e=>setForm({...form, type: e.target.value as any})}>
+              <option value="valve">SOLENOID VALF</option>
+              <option value="motor">PNÖMATİK AKTÜATÖR</option>
+              <option value="laser_sensor">LAZER SENSÖR</option>
             </select>
-          </div>
-        )}
-        <div className="mt-auto">
-          <button
-            onClick={() => apiCall('/api/hardware/config', { target, config: { connected: !hwState.connected } })}
-            className={`w-full py-3 rounded-xl font-bold text-sm transition-all active:scale-95 min-h-[44px] border ${hwState.connected ? 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100' : 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100'}`}
-          >
-            {hwState.connected ? 'BAĞLANTIYI KES' : 'BAĞLAN'}
-          </button>
-        </div>
-      </div>
-
-      {/* Terminal — karanlık kalsın (terminaler her zaman siyah olur) */}
-      <div className="col-span-1 lg:col-span-2 bg-slate-900 border border-slate-700 rounded-2xl p-5 flex flex-col">
-        <h3 className="text-base font-semibold mb-3 flex items-center gap-2 text-slate-200">
-          <Terminal className="w-5 h-5 text-slate-400" /> {title} Terminali
-        </h3>
-        <div className="flex-1 bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono text-sm overflow-y-auto mb-3 flex flex-col gap-1">
-          {logs.map((log, i) => (
-            <div key={i} className="flex gap-2">
-              <span className="text-slate-600 shrink-0">[{log.time}]</span>
-              {log.type === 'info' && <span className="text-slate-400 italic">{log.text}</span>}
-              {log.type === 'out'  && <span className="text-cyan-400"><span className="text-slate-600 mr-1">&gt;</span>{log.text}</span>}
-              {log.type === 'in'   && <span className="text-emerald-400"><span className="text-slate-600 mr-1">&lt;</span>{log.text}</span>}
-            </div>
-          ))}
-          <div ref={bottomRef} />
-        </div>
-        <form onSubmit={handleSend} className="flex gap-2">
-          <input type="text" value={input} onChange={(e) => setInput(e.target.value)}
-            placeholder="Komut girin (ör: STATUS, PING)..."
-            disabled={!hwState.connected}
-            className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 font-mono text-sm focus:outline-none focus:border-cyan-500 disabled:opacity-50 min-h-[44px]"
-          />
-          <button type="submit" disabled={!hwState.connected}
-            className="bg-cyan-600 text-white border border-cyan-700 px-5 py-3 rounded-xl font-bold text-sm hover:bg-cyan-700 active:scale-95 transition-all disabled:opacity-40 min-h-[44px]"
-          >
-            GÖNDER
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-// ─── Üretim Geçmişi ───────────────────────────────────────────────────────────
-function ProductionHistoryView() {
-  const [cycles, setCycles] = useState<ProductionCycle[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const fetchHistory = async () => {
-    setLoading(true);
-    try { setCycles(await (await fetch('/api/history')).json()); }
-    catch {/* ignore */} finally { setLoading(false); }
-  };
-
-  useEffect(() => { fetchHistory(); const iv = setInterval(fetchHistory, 10000); return () => clearInterval(iv); }, []);
-
-  const statusLabel: Record<string, { label: string; cls: string }> = {
-    running:     { label: 'DEVAM EDİYOR', cls: 'bg-blue-50 text-blue-700 border-blue-200' },
-    completed:   { label: 'TAMAMLANDI',   cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-    interrupted: { label: 'KESİLDİ',      cls: 'bg-amber-50 text-amber-700 border-amber-200' },
-    estop:       { label: 'ACİL STOP',    cls: 'bg-red-50 text-red-700 border-red-200' },
-  };
-
-  return (
-    <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
-      <div className="flex justify-between items-center mb-5">
-        <h3 className="text-base font-semibold flex items-center gap-2 text-slate-700">
-          <History className="w-5 h-5 text-slate-400" /> Üretim Geçmişi
-        </h3>
-        <button onClick={fetchHistory} className="flex items-center gap-2 px-4 py-2 bg-gray-50 hover:bg-gray-100 active:scale-95 border border-gray-200 transition-all rounded-xl text-sm font-semibold text-slate-600 min-h-[40px]">
-          <RefreshCw className="w-4 h-4" /> Yenile
-        </button>
-      </div>
-      {loading ? (
-        <div className="flex items-center justify-center h-40 text-slate-400">
-          <RefreshCw className="w-5 h-5 animate-spin mr-2" /> Yükleniyor...
-        </div>
-      ) : cycles.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-40 text-slate-400 gap-2">
-          <History className="w-10 h-10" /><p>Henüz üretim kaydı yok.</p>
-        </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-slate-500 border-b border-gray-200 bg-gray-50">
-                <th className="text-left py-3 px-3 font-semibold rounded-tl-lg">#</th>
-                <th className="text-left py-3 px-3 font-semibold">Başlangıç</th>
-                <th className="text-left py-3 px-3 font-semibold">Bitiş</th>
-                <th className="text-center py-3 px-3 font-semibold">Giren</th>
-                <th className="text-center py-3 px-3 font-semibold">Çıkan</th>
-                <th className="text-center py-3 px-3 font-semibold rounded-tr-lg">Durum</th>
-              </tr>
-            </thead>
-            <tbody>
-              {cycles.map((c) => {
-                const s = statusLabel[c.status] || statusLabel.completed;
-                return (
-                  <tr key={c.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-                    <td className="py-3 px-3 font-mono text-slate-400 text-xs">{c.id}</td>
-                    <td className="py-3 px-3 font-mono text-slate-600 text-xs">{c.started_at}</td>
-                    <td className="py-3 px-3 font-mono text-slate-400 text-xs">{c.completed_at || '—'}</td>
-                    <td className="py-3 px-3 text-center font-mono text-emerald-600 font-bold">{c.bottles_in}</td>
-                    <td className="py-3 px-3 text-center font-mono text-purple-600 font-bold">{c.bottles_out}</td>
-                    <td className="py-3 px-3 text-center">
-                      <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${s.cls}`}>{s.label}</span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Alarmlar ─────────────────────────────────────────────────────────────────
-function AlarmsView() {
-  const [alarms, setAlarms] = useState<Alarm[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const fetchAlarms = async () => {
-    setLoading(true);
-    try { setAlarms(await (await fetch('/api/alarms')).json()); }
-    catch {/* ignore */} finally { setLoading(false); }
-  };
-
-  const resolveAlarm = async (id: number) => {
-    await fetch(`/api/alarms/${id}/resolve`, { method: 'POST' });
-    fetchAlarms();
-  };
-
-  useEffect(() => { fetchAlarms(); const iv = setInterval(fetchAlarms, 5000); return () => clearInterval(iv); }, []);
-
-  const typeStyle: Record<string, { cls: string; icon: React.ReactNode }> = {
-    ESTOP:        { cls: 'bg-red-50 text-red-700 border-red-200',           icon: <AlertTriangle className="w-3.5 h-3.5" /> },
-    SENSOR_FAULT: { cls: 'bg-amber-50 text-amber-700 border-amber-200',     icon: <ScanLine      className="w-3.5 h-3.5" /> },
-    MOTOR_FAULT:  { cls: 'bg-orange-50 text-orange-700 border-orange-200',  icon: <Cpu           className="w-3.5 h-3.5" /> },
-    INFO:         { cls: 'bg-blue-50 text-blue-700 border-blue-200',        icon: <Activity      className="w-3.5 h-3.5" /> },
-  };
-
-  return (
-    <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
-      <div className="flex justify-between items-center mb-5">
-        <h3 className="text-base font-semibold flex items-center gap-2 text-slate-700">
-          <Bell className="w-5 h-5 text-slate-400" /> Alarm Kayıtları
-          {alarms.filter(a => !a.resolved_at).length > 0 && (
-            <span className="bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
-              {alarms.filter(a => !a.resolved_at).length}
-            </span>
-          )}
-        </h3>
-        <button onClick={fetchAlarms} className="flex items-center gap-2 px-4 py-2 bg-gray-50 hover:bg-gray-100 active:scale-95 border border-gray-200 transition-all rounded-xl text-sm font-semibold text-slate-600 min-h-[40px]">
-          <RefreshCw className="w-4 h-4" /> Yenile
-        </button>
-      </div>
-      {loading ? (
-        <div className="flex items-center justify-center h-40 text-slate-400">
-          <RefreshCw className="w-5 h-5 animate-spin mr-2" /> Yükleniyor...
-        </div>
-      ) : alarms.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-40 text-slate-400 gap-2">
-          <CheckCircle className="w-10 h-10 text-emerald-400" />
-          <p>Alarm yok. Her şey yolunda!</p>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {alarms.map((alarm) => {
-            const ts = typeStyle[alarm.type] || typeStyle.INFO;
-            const resolved = !!alarm.resolved_at;
-            return (
-              <div key={alarm.id} className={`flex items-center justify-between p-4 rounded-xl border transition-colors ${resolved ? 'bg-gray-50 border-gray-200 opacity-50' : 'bg-white border-gray-200 shadow-sm'}`}>
-                <div className="flex items-center gap-3">
-                  <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${ts.cls}`}>
-                    {ts.icon} {alarm.type}
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-slate-700">{alarm.message}</p>
-                    <p className="text-xs text-slate-400 font-mono mt-0.5">{alarm.created_at}</p>
-                  </div>
-                </div>
-                {!resolved ? (
-                  <button
-                    onClick={() => resolveAlarm(alarm.id)}
-                    className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-bold transition-all min-h-[40px] shrink-0 ml-3"
-                  >
-                    <CheckCircle className="w-4 h-4" /> Kapat
-                  </button>
-                ) : (
-                  <span className="text-xs text-slate-400 font-mono ml-3 shrink-0">{alarm.resolved_at}</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Ekstra Donanımlar ────────────────────────────────────────────────────────
-function CustomHardwareView({ state, apiCall }: { state: SystemState; apiCall: (e: string, p: Record<string, unknown>) => void }) {
-  const [showForm, setShowForm] = useState(false);
-  const [formData, setFormData] = useState<Partial<CustomDevice>>({
-    name: '', type: 'sensor', pin: '', command: '', responsePrefix: '', autoMode: false, pollIntervalSec: 3
-  });
-
-  const handleSave = () => {
-    if (!formData.name) return alert('İsim girmelisiniz');
-    const device: CustomDevice = {
-      id: crypto.randomUUID(),
-      name: formData.name,
-      type: formData.type as 'sensor' | 'actuator',
-      pin: formData.pin || 'Yok',
-      command: formData.command || '',
-      responsePrefix: formData.responsePrefix || '',
-      autoMode: formData.autoMode || false,
-      pollIntervalSec: formData.pollIntervalSec || 1,
-      lastValue: null,
-      lastUpdate: null,
-    };
-    fetch('/api/custom-hardware', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device }) });
-    setShowForm(false);
-  };
-
-  const handleTrigger = (id: string) => {
-    fetch(`/api/custom-hardware/${id}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
-  };
-
-  const handleDelete = (id: string) => {
-    if (confirm('Donanımı silmek istediğinize emin misiniz?')) {
-      fetch(`/api/custom-hardware/${id}`, { method: 'DELETE' });
-    }
-  };
-
-  return (
-    <div className="flex flex-col gap-4">
-      {showForm ? (
-        <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
-          <h3 className="text-base font-semibold mb-5 flex items-center gap-2 text-slate-700">
-            <PlusCircle className="w-5 h-5 text-slate-400" /> Yeni Donanım Tanımla
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div>
-              <label className="text-xs font-semibold text-slate-500 mb-1.5 block">Donanım Adı</label>
-              <input type="text" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })}
-                placeholder="Örn: Sıcaklık Sensörü" className="w-full bg-gray-50 border border-gray-300 rounded-xl px-3 py-2.5 text-sm" />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-slate-500 mb-1.5 block">Tip</label>
-              <select value={formData.type} onChange={e => setFormData({ ...formData, type: e.target.value as 'sensor' | 'actuator' })}
-                className="w-full bg-gray-50 border border-gray-300 rounded-xl px-3 py-2.5 text-sm">
-                <option value="sensor">Sensör (Okuma)</option>
-                <option value="actuator">Aktüatör (Kontrol/Tetik)</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-slate-500 mb-1.5 block">Pin (Bilgi Amaçlı)</label>
-              <input type="text" value={formData.pin} onChange={e => setFormData({ ...formData, pin: e.target.value })}
-                placeholder="A0, D4 vb." className="w-full bg-gray-50 border border-gray-300 rounded-xl px-3 py-2.5 text-sm font-mono" />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-slate-500 mb-1.5 block">Gönderilecek Komut (Varsa)</label>
-              <input type="text" value={formData.command} onChange={e => setFormData({ ...formData, command: e.target.value })}
-                placeholder="Örn: READ_TEMP" className="w-full bg-gray-50 border border-gray-300 rounded-xl px-3 py-2.5 text-sm font-mono" />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-slate-500 mb-1.5 block">Beklenen Yanıt Başlığı</label>
-              <input type="text" value={formData.responsePrefix} onChange={e => setFormData({ ...formData, responsePrefix: e.target.value })}
-                placeholder="Örn: TEMP:" className="w-full bg-gray-50 border border-gray-300 rounded-xl px-3 py-2.5 text-sm font-mono" />
-            </div>
-            <div className="flex flex-col gap-2 border p-3 rounded-xl border-gray-200">
-              <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 cursor-pointer">
-                <input type="checkbox" checked={formData.autoMode} onChange={e => setFormData({ ...formData, autoMode: e.target.checked })}
-                  className="w-4 h-4 rounded text-cyan-600 focus:ring-cyan-500" />
-                Otomatik Olarak Sorgula
-              </label>
-              {formData.autoMode && (
-                <div className="flex items-center gap-2 mt-1">
-                  <input type="number" min={1} max={60} value={formData.pollIntervalSec} onChange={e => setFormData({ ...formData, pollIntervalSec: parseInt(e.target.value) || 1 })}
-                    className="w-20 bg-gray-50 border border-gray-300 rounded-lg px-2 py-1.5 text-sm my-auto text-center font-mono" />
-                  <span className="text-xs text-slate-500">Saniyede Bir (sn)</span>
-                </div>
-              )}
-            </div>
-          </div>
-          <div className="mt-6 flex justify-end gap-3 pt-4 border-t border-gray-100">
-            <button onClick={() => setShowForm(false)} className="px-5 py-2.5 rounded-xl border border-gray-300 text-slate-600 font-semibold text-sm hover:bg-gray-50">Vazgeç</button>
-            <button onClick={handleSave} className="px-5 py-2.5 rounded-xl bg-cyan-600 text-white font-bold text-sm hover:bg-cyan-700 transition-all shadow-sm">Kaydet</button>
+          </FormGroup>
+          <FormGroup label="Haberleşme Sürücüsü">
+            <select className="w-full h-14 border-2 border-slate-100 bg-slate-50 p-4 text-sm font-black outline-none focus:border-blue-500 ${RADIUS}" value={form.target} onChange={e=>setForm({...form, target: e.target.value as any})}>
+              <option value="nano">PLC OUT (USB BRIDGE)</option>
+              <option value="raspi">MASTER (GPIO NATIVE)</option>
+            </select>
+          </FormGroup>
+          <FormGroup label="Lokal Adres (Pin)">
+            <input type="text" className="w-full h-14 border-2 border-slate-100 bg-slate-50 p-4 text-sm font-black outline-none focus:border-blue-500 ${RADIUS} uppercase" value={form.pin} onChange={e=>setForm({...form, pin: e.target.value})} placeholder="Ör: D8" />
+          </FormGroup>
+          <FormGroup label="Görünüm Etiketi (İsim)">
+            <input type="text" className="w-full h-14 border-2 border-slate-100 bg-slate-50 p-4 text-sm font-black outline-none focus:border-blue-500 ${RADIUS}" value={form.name} onChange={e=>setForm({...form, name: e.target.value})} placeholder="Ör: Giriş Pisti Kilidi" />
+          </FormGroup>
+          <FormGroup label="Proses İşlem Rolü">
+            <select className="w-full h-14 border-2 border-slate-100 bg-slate-50 p-4 text-sm font-black outline-none focus:border-blue-500 ${RADIUS}" value={form.role} onChange={e=>setForm({...form, role: e.target.value as any})}>
+              <option value="none">SADECE MANUEL TEST</option>
+              <option value="entry_laser">ANA GİRİŞ LAZERİ</option>
+              <option value="exit_laser">ANA ÇIKIŞ LAZERİ</option>
+              <option value="entry_lock">GİRİŞ BARİYERİ</option>
+              <option value="exit_lock">ÇIKIŞ BARİYERİ</option>
+              {Array.from({length:10}).map((_,i) => <option key={i} value={`valve_${i+1}`}>{i+1}. DOLUM NOZULU</option>)}
+            </select>
+          </FormGroup>
+          <div className="col-span-full flex justify-end gap-3 pt-6">
+            <button onClick={()=>setIsAdding(false)} className={`px-10 h-14 text-xs font-black border-2 border-slate-100 ${RADIUS}`}>İPTAL</button>
+            <button onClick={() => { apiCall('/api/devices', { device: { ...form, id: Math.random().toString(36).substr(2, 9) } }); setIsAdding(false); }} className={`px-16 h-14 bg-slate-900 text-white text-xs font-black uppercase shadow-xl ${RADIUS}`}>SİSTEME KAYDET</button>
           </div>
         </div>
-      ) : (
-        <div className="flex justify-end">
-          <button onClick={() => setShowForm(true)} className="flex items-center gap-2 px-5 py-2.5 bg-cyan-600 hover:bg-cyan-700 active:scale-95 text-white rounded-xl font-bold text-sm shadow-sm transition-all min-h-[44px]">
-            <PlusCircle className="w-4 h-4" /> Yeni Donanım Ekle
-          </button>
-        </div>
       )}
 
-      {state.customDevices?.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {state.customDevices.map(dev => (
-            <div key={dev.id} className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm flex flex-col min-h-[160px]">
-              <div className="flex justify-between items-start mb-4">
-                <div>
-                  <h4 className="font-semibold text-slate-800">{dev.name}</h4>
-                  <div className="flex gap-2 text-xs font-mono text-slate-400 mt-1">
-                    <span className="px-1.5 bg-gray-50 border rounded-md">Pin: {dev.pin}</span>
-                    <span className="px-1.5 bg-gray-50 border rounded-md">{dev.type === 'sensor' ? 'Sensör' : 'Aktüatör'}</span>
-                  </div>
-                </div>
-                <button onClick={() => handleDelete(dev.id)} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
-                  <Trash2 className="w-4 h-4" />
-                </button>
+      <div className="flex flex-col gap-3">
+        {state.devices.map(dev => (
+          <div key={dev.id} className={`flex items-center justify-between p-6 bg-white border border-slate-100 hover:border-slate-300 transition-all duration-300 shadow-sm ${RADIUS}`}>
+            <div className="flex items-center gap-8">
+              <div className={`w-14 h-14 flex items-center justify-center border-2 transition-all ${RADIUS} ${dev.active ? 'bg-slate-900 border-slate-950 text-white shadow-xl' : 'bg-slate-50 border-slate-100 text-slate-300'}`}>
+                {dev.type === 'valve' ? <Droplet className="w-6 h-6" /> : <Microchip className="w-6 h-6" />}
               </div>
-
-              <div className="flex-1 flex flex-col justify-center mb-4 border border-gray-200 rounded-xl bg-gray-50 p-4 relative">
-                <span className="text-[10px] absolute top-2 right-2 text-slate-400 font-bold tracking-wider">SON DEĞER</span>
-                <span className={`text-2xl min-h-[32px] font-bold font-mono tracking-tight text-center ${dev.lastValue ? 'text-cyan-700' : 'text-slate-400'}`}>
-                  {dev.lastValue || '—'}
-                </span>
-                {dev.lastUpdate && <span className="text-[10px] text-slate-400 text-center mt-1">Son Güncelleme: {dev.lastUpdate}</span>}
-              </div>
-
-              <div className="flex justify-between items-center bg-gray-50 p-2 rounded-xl border border-gray-200 mt-auto">
-                <span className={`text-xs px-2 py-1 rounded-lg font-bold border ${dev.autoMode ? 'bg-cyan-50 text-cyan-600 border-cyan-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}>
-                  {dev.autoMode ? `AUTO (${dev.pollIntervalSec}s)` : 'MANUEL'}
-                </span>
-                {!dev.autoMode && dev.command && (
-                  <button onClick={() => handleTrigger(dev.id)} className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-600 text-white hover:bg-cyan-700 active:scale-95 transition-all text-xs font-bold rounded-lg shadow-sm">
-                    <Send className="w-3.5 h-3.5" /> Sor
-                  </button>
-                )}
-                {dev.type === 'actuator' && dev.autoMode === false && (
-                  <button onClick={() => handleTrigger(dev.id)} className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-white hover:bg-amber-600 active:scale-95 transition-all text-xs font-bold rounded-lg shadow-sm">
-                    <Activity className="w-3.5 h-3.5" /> Tetikle
-                  </button>
-                )}
+              <div className="flex flex-col">
+                <span className="text-[11px] font-black text-blue-500 uppercase italic mb-0.5">{dev.role}</span>
+                <span className="text-base font-black text-slate-800 uppercase leading-none">{dev.name}</span>
+                <span className="text-[9px] font-bold text-slate-300 mt-1 uppercase">Bağlantı: {dev.target.toUpperCase()} / {dev.pin}</span>
               </div>
             </div>
-          ))}
-        </div>
-      )}
+            <div className="flex gap-3">
+              <button onClick={() => apiCall(`/api/devices/${dev.id}/trigger`, {})} className={`h-11 px-8 text-[11px] font-black border-2 border-slate-100 hover:border-slate-800 transition-all ${RADIUS}`}>TEST</button>
+              <button disabled={state.systemRunning} onClick={() => apiCall(`/api/devices/${dev.id}`, {}, 'DELETE')} className={`h-11 px-8 text-[11px] font-black border-2 border-rose-50 text-rose-500 hover:bg-rose-500 hover:text-white transition-all ${RADIUS}`}>SİL</button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
+function FormGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-1">{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function EmergencyShutter({ onReset }: { onReset: () => void }) {
+  return (
+    <div className="absolute inset-0 z-[100] bg-rose-600/95 backdrop-blur-xl flex flex-col items-center justify-center p-20 text-center animate-in fade-in duration-500">
+      <div className="bg-white p-12 rounded-full mb-12 shadow-[0_0_100px_rgba(255,255,255,0.4)] animate-bounce">
+        <AlertTriangle className="w-32 h-32 text-rose-600" />
+      </div>
+      <h1 className="text-8xl font-black text-white leading-none uppercase tracking-tighter drop-shadow-lg">SİSTEM DURDURULDU</h1>
+      <p className="text-2xl text-rose-100 font-bold uppercase tracking-[0.6em] mt-8 select-none">KRİTİK GÜVENLİK KİLİDİ AKTİF</p>
+      <button onClick={onReset} className={`mt-20 px-24 py-8 bg-white text-rose-600 font-black text-3xl shadow-2xl active:scale-95 transition-all ${RADIUS} hover:bg-rose-50`}>
+        SİSTEMİ GÜVENLE SIFIRLA
+      </button>
+    </div>
+  );
+}

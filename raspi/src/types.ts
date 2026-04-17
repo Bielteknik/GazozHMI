@@ -2,62 +2,52 @@ export interface SystemState {
   systemRunning: boolean;
   emergencyStop: boolean;
   hasError?: boolean;
-  valves: boolean[];
-  motors: {
-    id: number;
-    name: string;
-    running: boolean;
-    speed: number;
-    direction: 'forward' | 'reverse';
-    runningTime: number;
-    steps?: number;
-  }[];
-  sensors: {
-    id: number;
-    name: string;
-    count: number;
-    active?: boolean;
-    blocked?: boolean;
-  }[];
-  limitSwitches: {
-    id: string;
-    name: string;
-    active: boolean;
-    type: 'entry' | 'exit';
-    position: 'cw' | 'ccw';
-  }[];
-  locks: { entry: boolean; exit: boolean };
-  config: {
-    fillWaitTime: number;
-    syrupVolume: number;
-    valveFillTimes: number[];
-    activeValves: boolean[];
-    targetBottles: number;
-  };
+  
   process: {
-    state: 'WAITING_BOTTLES' | 'PRE_FILL_WAIT' | 'FILLING' | 'POST_FILL_WAIT' | 'EXITING_BOTTLES';
+    state: 'IDLE' | 'WAITING_ENTRY' | 'FILLING' | 'WAITING_EXIT' | 'WASHING';
     bottlesInArea: number;
-    timer: number;
+    targetBottles: number;
     currentCycleId?: number;
   };
+  
   hardware: {
-    rpi: { connected: boolean; port: string; status: string };
-    nano: { connected: boolean; port: string; baudRate: number; status: string; simulated: boolean };
+    rpi: { connected: boolean; status: string };
+    nano: { connected: boolean; port: string; baudRate: number; status: string };
   };
-  customDevices: CustomDevice[];
+  
+  config: {
+    fillWaitTime: number;
+    sensorTimeout: number;
+    dailyQuota: number;
+  };
+  
+  devices: Device[]; // 100% dinamik donanımlar
 }
 
-export interface CustomDevice {
-  id: string;             // Benzersiz ID (UUID vb.)
-  name: string;           // Ekranda görünecek isim (örn. Sıcaklık)
-  type: 'sensor' | 'actuator'; // Sadece okuma mı (sensor), okuma/yazma/tetik mi (actuator)
-  pin: string;            // A0, D4 vs (bilgi amaçlı)
-  command: string;        // Arduino'ya gidecek komut (örn. READ_TEMP)
-  responsePrefix: string; // Arduino'dan gelecek yanıt başlangıcı (örn. TEMP:)
-  autoMode: boolean;      // Otomatik sorgulama açık mı?
-  pollIntervalSec: number;// Otomatik ise kaç saniyede bir sorulacak
-  lastValue: string | null;      // Cihazdan gelen son okunan değer
-  lastUpdate: string | null;     // Son güncelleme zaman damgası
+export type ConnectionTarget = 'raspi' | 'nano';
+export type DeviceType = 'valve' | 'motor' | 'laser_sensor' | 'limit_switch' | 'generic';
+export type SystemRole = 
+  | 'none'
+  | 'entry_laser'
+  | 'exit_laser'
+  | 'entry_lock'
+  | 'exit_lock'
+  | 'valve_1' | 'valve_2' | 'valve_3' | 'valve_4' | 'valve_5' 
+  | 'valve_6' | 'valve_7' | 'valve_8' | 'valve_9' | 'valve_10';
+
+export interface Device {
+  id: string;              // UUID
+  name: string;            // Kullanıcı dostu isim
+  type: DeviceType;        // Donanımın fiziksel/mantıksal tipi
+  role: SystemRole;        // Sistem içerisindeki görevi
+  target: ConnectionTarget;// Hangi karta bağlı?
+  pin: string;             // Fiziksel bağlandı pini (Örn: GPIO4 veya D8)
+  fillDurationMs?: number; // Sadece valfler için (ms cinsinden dolum süresi)
+  
+  // -- Gerçek zamanlı (Volatile) State Durumları --
+  active: boolean;         // Şu an tetiklenmiş (Açık) durumda mı?
+  count?: number;          // Sensörler için sayıcı
+  lastUpdate: string | null;
 }
 
 export interface ProductionCycle {
