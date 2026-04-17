@@ -7,6 +7,7 @@ import {
   Activity, Settings, AlertTriangle, Droplet, Cpu, ScanLine,
   Play, Square, Lock, Unlock, Timer, ToggleRight, ArrowRight,
   ArrowLeft, Terminal, History, Bell, CheckCircle, RefreshCw,
+  Maximize2, Minimize2,
 } from 'lucide-react';
 import { SystemState, ProductionCycle, Alarm } from './types';
 
@@ -14,6 +15,33 @@ import { SystemState, ProductionCycle, Alarm } from './types';
 export default function App() {
   const [state, setState] = useState<SystemState | null>(null);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'system'>('dashboard');
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Tam ekran kontrolü
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  };
+
+  useEffect(() => {
+    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onFsChange);
+    // İlk dokunuşta otomatik tam ekran (kiosk modu)
+    const autoFs = () => {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
+      window.removeEventListener('pointerdown', autoFs);
+    };
+    window.addEventListener('pointerdown', autoFs);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFsChange);
+      window.removeEventListener('pointerdown', autoFs);
+    };
+  }, []);
 
   useEffect(() => {
     const fetchState = async () => {
@@ -88,6 +116,14 @@ export default function App() {
           </div>
 
           <button
+            onClick={toggleFullscreen}
+            className="p-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 active:scale-95 border border-gray-200 text-slate-500 transition-all min-h-[44px] min-w-[44px] flex items-center justify-center"
+            title={isFullscreen ? 'Tam Ekrandan Çık' : 'Tam Ekran'}
+          >
+            {isFullscreen ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
+          </button>
+
+          <button
             onClick={() => apiCall('/api/system', { running: !state.systemRunning })}
             disabled={state.emergencyStop}
             className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm transition-all active:scale-95 min-h-[44px] border ${
@@ -116,7 +152,7 @@ export default function App() {
       </header>
 
       {/* Ana İçerik */}
-      <main className="flex-1 overflow-y-auto p-4 relative">
+      <main className="flex-1 flex flex-col p-4 relative overflow-hidden">
 
         {/* Acil Stop Overlay */}
         {state.emergencyStop && (
@@ -170,9 +206,9 @@ function DashboardView({ state, apiCall }: { state: SystemState; apiCall: (e: st
   const proc = processLabels[state.process.state];
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex-1 flex flex-col gap-4 min-h-0">
       {/* Durum Kartları */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 shrink-0">
         <StatusCard title="Süreç Durumu"         value={proc.text}
           icon={<Activity className={`w-7 h-7 ${proc.color}`} />} color="blue"
           customValueClass={`text-base font-bold font-mono ${proc.color}`} />
@@ -185,7 +221,7 @@ function DashboardView({ state, apiCall }: { state: SystemState; apiCall: (e: st
       </div>
 
       {/* Hat Görselleştirme */}
-      <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm flex flex-col min-h-[360px]">
+      <div className="flex-1 min-h-0 bg-white border border-gray-200 rounded-2xl p-5 shadow-sm flex flex-col">
         <h3 className="text-base font-semibold mb-4 flex items-center gap-2 text-slate-700">
           <Activity className="w-5 h-5 text-slate-400" /> Hat Durumu
         </h3>
@@ -274,7 +310,7 @@ function SystemView({ state, apiCall }: { state: SystemState; apiCall: (e: strin
   const [hwTab,  setHwTab]  = useState<'sensors' | 'switches' | 'entry_lock' | 'exit_lock' | 'valves'>('sensors');
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex-1 flex flex-col gap-4 min-h-0">
       <div className="flex gap-1.5 border-b border-gray-200 pb-3 overflow-x-auto">
         <TabButton active={sysTab === 'settings'} onClick={() => setSysTab('settings')} icon={<Settings className="w-4 h-4" />} label="Ayarlar" />
         <TabButton active={sysTab === 'hardware'} onClick={() => setSysTab('hardware')} icon={<Cpu      className="w-4 h-4" />} label="Donanım" />
@@ -285,7 +321,7 @@ function SystemView({ state, apiCall }: { state: SystemState; apiCall: (e: strin
         <TabButton active={sysTab === 'alarms'}   onClick={() => setSysTab('alarms')}   icon={<Bell     className="w-4 h-4" />} label="Alarmlar" />
       </div>
 
-      <div className="flex-1">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         {sysTab === 'settings' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
