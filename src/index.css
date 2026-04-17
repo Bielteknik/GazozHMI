@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+/* ─── Konveyör Bant Animasyonu ─────────────────────────────────────────────── */
+@keyframes conveyor {
+  from { background-position: 0 0; }
+  to   { background-position: 40px 0; }
+}
+.animate-conveyor {
+  animation: conveyor 1.5s linear infinite;
+}
+
+/* ─── Dokunmatik Geri Bildirim ──────────────────────────────────────────────── */
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ─── Özel Scrollbar ────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* ─── Range Input Özelleştirme ──────────────────────────────────────────────── */
+input[type="range"] {
+  cursor: pointer;
+}
+input[type="range"]:disabled {
+  cursor: not-allowed;
+}
+
+/* ─── Tablo Satır Vurgusu ───────────────────────────────────────────────────── */
+tbody tr:last-child {
+  border-bottom: none;
+}

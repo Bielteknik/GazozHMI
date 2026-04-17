@@ -1,0 +1,5 @@
+{
+  "name": "Gazoz Dolum Ünitesi HMI",
+  "description": "Raspberry Pi tabanlı 10 valf, 2 step motor ve 2 lazer sensör kontrollü endüstriyel dolum tesisi arayüzü.",
+  "requestFramePermissions": []
+}
