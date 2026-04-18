@@ -225,7 +225,7 @@ function ConsoleView({ state }: { state: SystemState }) {
       if (p && p.active !== dev.active)
         entries.push(mkLog(
           dev.type === 'laser_sensor' ? (dev.active ? 'WARN' : 'OK') : (dev.active ? 'OK' : 'INFO'),
-          `[${dev.target.toUpperCase()}:${dev.pin}] ${dev.name} → ${dev.active ? 'AKTİF' : 'PASİF'}`
+          `[${dev.target === 'nano' ? 'PLC DRIVER' : dev.target.toUpperCase()}:${dev.pin}] ${dev.name} → ${dev.active ? 'AKTİF' : 'PASİF'}`
         ));
     });
 
@@ -287,7 +287,7 @@ function ConsoleView({ state }: { state: SystemState }) {
                   <div className={`w-2 h-2 rounded-full ${dev.active ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'border border-slate-400'}`} />
                   <span className={`text-[10px] font-black tracking-wider w-4 ${typeColor}`}>{dev.type === 'valve' ? 'V' : dev.type === 'laser_sensor' ? 'L' : 'M'}</span>
                   <span className="text-[11px] font-bold text-slate-800 flex-1 truncate">{dev.name}</span>
-                  <span className="text-[9px] font-bold text-slate-500 shrink-0 uppercase">{dev.target}/{dev.pin}</span>
+                  <span className="text-[9px] font-bold text-slate-500 shrink-0 uppercase">{dev.target === 'nano' ? 'PLC Driver' : dev.target}/{dev.pin}</span>
                   <span className={`text-[10px] font-black w-8 text-right shrink-0 ${dev.active ? 'text-emerald-700' : 'text-slate-500'}`}>{dev.active ? 'ON' : 'OFF'}</span>
                 </div>
               );
@@ -397,7 +397,7 @@ function HardwareList({ state }: { state: SystemState }) {
             <div className="text-[9px] font-bold text-slate-400 uppercase mb-0.5 tracking-widest">{dev.role}</div>
             <div className="text-sm font-black text-slate-800 leading-none h-8 flex items-center uppercase">{dev.name}</div>
             <div className="mt-4 pt-3 border-t border-slate-50 flex justify-between text-[10px] font-black">
-              <span className="text-slate-300 italic">@{dev.target.toUpperCase()}</span>
+              <span className="text-slate-300 italic">@{dev.target === 'nano' ? 'PLC DRIVER' : dev.target.toUpperCase()}</span>
               <span className="bg-slate-50 px-2 py-0.5 rounded text-blue-500">{dev.pin}</span>
             </div>
           </div>
@@ -531,7 +531,7 @@ function HardwareInventoryView({ state, apiCall }: { state: SystemState; apiCall
             </FormGroup>
             <FormGroup label="Sürücü / Hedef">
               <select className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 uppercase outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 ${RADIUS}`} value={form.target} onChange={e=>setForm({...form, target: e.target.value as any})}>
-                <option value="nano">PLC (USB SERIAL)</option>
+                <option value="nano">PLC DRIVER (USB SERIAL)</option>
                 <option value="raspi">MASTER (NATIVE PINS)</option>
               </select>
             </FormGroup>
@@ -574,7 +574,7 @@ function HardwareInventoryView({ state, apiCall }: { state: SystemState; apiCall
                 <div className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-wider h-3">
                   <span className="text-blue-500">{dev.role.replace('_', ' ')}</span>
                   <span className="w-1 h-1 bg-slate-200 rounded-full" />
-                  <span className="text-slate-400">{dev.target} &rarr; {dev.pin}</span>
+                  <span className="text-slate-400">{dev.target === 'nano' ? 'PLC DRIVER' : dev.target} &rarr; {dev.pin}</span>
                 </div>
               </div>
             </div>
