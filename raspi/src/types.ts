@@ -20,6 +20,8 @@ export interface SystemState {
     baseFlowRateMs: number;
     sensorTimeout: number;
     dailyQuota: number;
+    dropDelayMs: number;
+    conveyorSpeed: number;
   };
   
   devices: Device[]; // 100% dinamik donanımlar

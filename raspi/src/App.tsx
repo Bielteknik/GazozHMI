@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import {
   Activity, Settings, AlertTriangle, Droplet, Cpu, ScanLine,
   Play, Square, Lock, Unlock, Timer, Terminal, History, Bell,
-  PlusCircle, Trash2, Cpu as Microchip, LayoutDashboard, Map as MapIcon, RefreshCw, Layers
+  PlusCircle, Trash2, Cpu as Microchip, LayoutDashboard, Map as MapIcon, RefreshCw, Layers, Shield
 } from 'lucide-react';
 import { SystemState, Device } from './types';
 
@@ -438,44 +438,94 @@ function MainTabButton({ active, onClick, label }: { active: boolean; onClick: (
 }
 
 function ProcessSettingsView({ state, apiCall }: { state: SystemState; apiCall: any }) {
+  const [activeTab, setActiveTab] = useState<'calib'|'cap'|'safe'|'cip'>('calib');
+  const [customCip, setCustomCip] = useState(1);
+
   const tVol = state.config.targetVolumeML || 40;
   const tRate = state.config.baseFlowRateMs || 50;
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <InputComponent label="Hattaki Hedef Şişe" value={state.process.targetBottles} unit="ADET" onChange={v => apiCall('/api/config', { targetBottles: v })} disabled={state.systemRunning} />
-        <InputComponent label="Sensör Zaman Aşımı" value={state.config.sensorTimeout} unit="MS" onChange={v => apiCall('/api/config', { sensorTimeout: v })} disabled={state.systemRunning} />
-        <InputComponent label="Hedef Şişe Dolum Hacmi" value={tVol} unit="ML" onChange={v => apiCall('/api/config', { targetVolumeML: v })} disabled={state.systemRunning} />
-        <InputComponent label="Birim Valf Debi Katsayısı" value={tRate} unit="MS / 1 ML" onChange={v => apiCall('/api/config', { baseFlowRateMs: v })} disabled={state.systemRunning} />
-        <InputComponent label="Vardiya Kotası" value={state.config.dailyQuota} unit="ŞİŞE" onChange={v => apiCall('/api/config', { dailyQuota: v })} disabled={state.systemRunning} />
+    <div className="flex flex-col bg-white border border-slate-200 shadow-[0_4px_20px_-10px_rgba(0,0,0,0.05)] relative overflow-hidden flex-1 max-h-[700px] rounded-lg">
+      <div className="flex overflow-x-auto bg-slate-50 shrink-0 border-b border-slate-200 hide-scrollbar rounded-t-lg">
+        <ProcessTabBtn active={activeTab==='calib'} onClick={()=>setActiveTab('calib')} icon={<Droplet className="w-4 h-4"/>} label="KALİBRASYON" />
+        <ProcessTabBtn active={activeTab==='cap'} onClick={()=>setActiveTab('cap')} icon={<Activity className="w-4 h-4"/>} label="KAPASİTE" />
+        <ProcessTabBtn active={activeTab==='safe'} onClick={()=>setActiveTab('safe')} icon={<Shield className="w-4 h-4"/>} label="GÜVENLİK" />
+        <ProcessTabBtn active={activeTab==='cip'} onClick={()=>setActiveTab('cip')} icon={<RefreshCw className="w-4 h-4"/>} label="YIKAMA (CIP)" />
       </div>
 
-      <div className={`p-4 border border-blue-200 bg-blue-50 text-blue-800 ${RADIUS} flex justify-between items-center shadow-sm`}>
-        <div className="flex flex-col">
-          <span className="text-[10px] font-black uppercase tracking-widest text-blue-500">Mevcut Kalibrasyon Sonucu</span>
-          <span className="text-sm font-bold mt-0.5">Her valf ortalama <span className="text-blue-700 font-black">{tVol * tRate} MS</span> açık kalarak <span className="text-blue-700 font-black">{tVol} ML</span> sıvı dolduracak.</span>
-        </div>
-        <Droplet className="w-8 h-8 text-blue-400 opacity-50" />
-      </div>
+      <div className="p-6 md:p-8 flex-1 overflow-y-auto bg-slate-50/10">
+        {activeTab === 'calib' && (
+          <div className="flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <InputComponent label="Hedef Şişe Dolum Hacmi" value={tVol} unit="ML" onChange={v => apiCall('/api/config', { targetVolumeML: v })} disabled={state.systemRunning} />
+                <InputComponent label="Birim Valf Debi Katsayısı" value={tRate} unit="MS / 1 ML" onChange={v => apiCall('/api/config', { baseFlowRateMs: v })} disabled={state.systemRunning} />
+             </div>
+             <div className={`p-5 border border-blue-200 bg-blue-50 text-blue-800 ${RADIUS} flex justify-between items-center shadow-inner mt-2`}>
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-blue-500 mb-1">Mevcut Kalibrasyon Sonucu</span>
+                  <span className="text-sm font-bold mt-0.5 max-w-sm">Her valf ortalama <span className="text-blue-700 font-black">{tVol * tRate} MS</span> açık kalarak <span className="text-blue-700 font-black">{tVol} ML</span> sıvı dolduracak.</span>
+                </div>
+                <Droplet className="w-10 h-10 text-blue-400 opacity-50 shrink-0 ml-4 animate-pulse flex-none" />
+             </div>
+          </div>
+        )}
 
-      <div className={`p-6 bg-white border border-slate-200 shadow-sm ${RADIUS} relative overflow-hidden mt-2`}>
-        <div className="flex items-center gap-3 mb-5">
-          <div className="w-1.5 h-5 bg-gradient-to-b from-blue-400 to-blue-600 rounded-full" />
-          <h4 className="text-[11px] font-black text-slate-800 tracking-widest uppercase">OTOMATİK YIKAMA (CIP) RUTİNLERİ</h4>
-        </div>
-        <div className="flex gap-4 relative z-10 w-full mb-1">
-          <WashActionBtn label="SABAH AÇILIŞ" sub="60sn Hızlı" onClick={() => apiCall('/api/wash', { duration: 60000 })} disabled={state.systemRunning || state.process.state === 'WASHING'} primary />
-          <WashActionBtn label="AKŞAM KAPANIŞ" sub="300sn Detaylı" onClick={() => apiCall('/api/wash', { duration: 300000 })} disabled={state.systemRunning || state.process.state === 'WASHING'} />
-        </div>
-        {state.process.state === 'WASHING' && (
-          <div className="absolute inset-0 bg-blue-600/95 backdrop-blur-md flex flex-col items-center justify-center text-white gap-3 z-20 pointer-events-auto">
-            <RefreshCw className="w-8 h-8 animate-spin" />
-            <span className="text-lg font-black tracking-widest uppercase">CIP İŞLEMİ SÜRÜYOR</span>
+        {activeTab === 'cap' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+             <InputComponent label="Vardiya Kotası" value={state.config.dailyQuota} unit="ŞİŞE" onChange={v => apiCall('/api/config', { dailyQuota: v })} disabled={state.systemRunning} />
+             <InputComponent label="Hattaki Hedef Şişe (Aynı Anda)" value={state.process.targetBottles} unit="ADET" onChange={v => apiCall('/api/config', { targetBottles: v })} disabled={state.systemRunning} />
+             <InputComponent label="Konveyör Bant Hızı" value={state.config.conveyorSpeed || 80} unit="% PWM" onChange={v => apiCall('/api/config', { conveyorSpeed: v })} disabled={state.systemRunning} />
+          </div>
+        )}
+
+        {activeTab === 'safe' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+             <InputComponent label="Sensör Zaman Aşımı" value={state.config.sensorTimeout} unit="MS" onChange={v => apiCall('/api/config', { sensorTimeout: v })} disabled={state.systemRunning} />
+             <InputComponent label="Valf Damlatma Bekleme (Gecikme)" value={state.config.dropDelayMs || 500} unit="MS" onChange={v => apiCall('/api/config', { dropDelayMs: v })} disabled={state.systemRunning} />
+          </div>
+        )}
+
+        {activeTab === 'cip' && (
+          <div className="flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 relative z-10 w-full mb-2">
+              <WashActionBtn label="SABAH AÇILIŞ" sub="60 saniye Hızlı" onClick={() => apiCall('/api/wash', { duration: 60000 })} disabled={state.systemRunning || state.process.state === 'WASHING'} primary />
+              <WashActionBtn label="AKŞAM KAPANIŞ" sub="300 saniye Detaylı" onClick={() => apiCall('/api/wash', { duration: 300000 })} disabled={state.systemRunning || state.process.state === 'WASHING'} />
+            </div>
+            
+            <div className={`p-6 border border-slate-200 bg-white flex flex-col md:flex-row items-start md:items-center justify-between gap-6 ${RADIUS} shadow-sm border-t-4 border-t-blue-500`}>
+               <div className="flex flex-col flex-1 w-full">
+                 <span className="text-[11px] font-black uppercase tracking-widest text-slate-800 mb-3 block border-b border-slate-100 pb-2">Özel Süreli Manuel Yıkama Uzunluğu (Dakika)</span>
+                 <div className="flex gap-4 w-full mt-2">
+                    <div className="relative flex-1">
+                      <input type="number" min="1" max="60" value={customCip} onChange={e=>setCustomCip(parseInt(e.target.value)||1)} disabled={state.systemRunning || state.process.state === 'WASHING'} className="w-full h-11 px-4 border text-[13px] border-slate-300 font-black text-slate-700 outline-none focus:border-blue-500 disabled:opacity-50 rounded" />
+                      <span className="absolute right-4 top-0 bottom-0 flex items-center text-[10px] font-black text-slate-400">DAKİKA</span>
+                    </div>
+                    <button onClick={() => apiCall('/api/wash', { duration: customCip * 60000 })} disabled={state.systemRunning || state.process.state === 'WASHING'} className={`h-11 px-8 bg-blue-600 text-white text-[11px] font-black uppercase flex items-center gap-2 hover:bg-blue-700 transition shadow-md rounded disabled:opacity-50 shrink-0`}>
+                       <Play className="w-4 h-4 fill-white"/> BAŞLAT
+                    </button>
+                 </div>
+               </div>
+            </div>
+
+            {state.process.state === 'WASHING' && (
+              <div className="absolute inset-0 bg-blue-600/95 backdrop-blur-md flex flex-col items-center justify-center text-white gap-4 z-20 pointer-events-auto rounded-lg shadow-2xl">
+                <RefreshCw className="w-10 h-10 animate-spin" />
+                <span className="text-xl font-black tracking-widest uppercase text-white shadow-sm">CIP İŞLEMİ SÜRÜYOR</span>
+              </div>
+            )}
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+function ProcessTabBtn({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
+  return (
+    <button onClick={onClick} className={`flex-1 min-w-[200px] h-14 flex items-center justify-center gap-3 border-b-[3px] font-black text-[11px] tracking-widest uppercase transition-all ${active ? 'border-blue-600 text-blue-600 bg-white shadow-[0_-4px_12px_rgba(0,0,0,0.02)_inset]' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-slate-100/50'}`}>
+      {icon}
+      <span>{label}</span>
+    </button>
   );
 }
 

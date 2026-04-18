@@ -48,6 +48,8 @@ const state: SystemState = {
     baseFlowRateMs: 50,    // Default 50ms per ML (2 sec for 40 ML)
     sensorTimeout: 30000,
     dailyQuota: 10000,
+    dropDelayMs: 500,      // Default 500ms damla bekleme süresi
+    conveyorSpeed: 80,     // Default %80 Hız
   },
   devices: [],
 };
@@ -208,6 +210,8 @@ async function startServer() {
   if (saved.baseFlowRateMs) state.config.baseFlowRateMs = parseInt(saved.baseFlowRateMs);
   if (saved.sensorTimeout) state.config.sensorTimeout = parseInt(saved.sensorTimeout);
   if (saved.dailyQuota) state.config.dailyQuota = parseInt(saved.dailyQuota);
+  if (saved.dropDelayMs) state.config.dropDelayMs = parseInt(saved.dropDelayMs);
+  if (saved.conveyorSpeed) state.config.conveyorSpeed = parseInt(saved.conveyorSpeed);
 
   // DB ve Konfigürasyonlar tam hazır olduktan sonra Arduino'yu başlat
   arduino = new ArduinoManager(ARDUINO_PORT, ARDUINO_BAUDRATE, false);
@@ -364,6 +368,14 @@ async function startServer() {
     if (updates.dailyQuota !== undefined) {
       state.config.dailyQuota = updates.dailyQuota;
       saveConfig('dailyQuota', updates.dailyQuota.toString());
+    }
+    if (updates.dropDelayMs !== undefined) {
+      state.config.dropDelayMs = updates.dropDelayMs;
+      saveConfig('dropDelayMs', updates.dropDelayMs.toString());
+    }
+    if (updates.conveyorSpeed !== undefined) {
+      state.config.conveyorSpeed = updates.conveyorSpeed;
+      saveConfig('conveyorSpeed', updates.conveyorSpeed.toString());
     }
     res.json(state);
   });
