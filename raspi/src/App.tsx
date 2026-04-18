@@ -246,22 +246,22 @@ function ConsoleView({ state }: { state: SystemState }) {
   const outSensor = state.devices.find(d => d.role === 'exit_laser');
 
   return (
-    <div className="absolute inset-0 bg-slate-50 font-mono flex flex-col overflow-hidden text-slate-800 shadow-inner">
+    <div className="absolute inset-0 bg-slate-200 font-mono flex flex-col overflow-hidden text-slate-800 shadow-inner">
       
       {/* ── TOP STATUS BAR ── */}
-      <div className="px-6 py-2.5 border-b border-slate-200 bg-white flex gap-6 items-center shrink-0 flex-wrap shadow-sm relative z-10">
+      <div className="px-6 py-2.5 border-b border-slate-300 bg-slate-100 flex gap-6 items-center shrink-0 flex-wrap shadow-sm relative z-10">
         <div className="flex gap-2.5 items-center">
           <span className="text-[10px] text-slate-500 tracking-widest font-bold">PROSES</span>
-          <span className={`text-[11px] font-black border rounded px-2.5 py-0.5 tracking-wider uppercase ${state.process.state === 'FILLING' ? 'text-emerald-600 border-emerald-300 bg-emerald-50' : state.process.state === 'WAITING_EXIT' ? 'text-blue-600 border-blue-300 bg-blue-50' : state.process.state === 'WASHING' ? 'text-purple-600 border-purple-300 bg-purple-50' : 'text-slate-600 border-slate-300 bg-slate-100'}`}>
+          <span className={`text-[11px] font-black border rounded px-2.5 py-0.5 tracking-wider uppercase ${state.process.state === 'FILLING' ? 'text-emerald-700 border-emerald-400 bg-emerald-100' : state.process.state === 'WAITING_EXIT' ? 'text-blue-700 border-blue-400 bg-blue-100' : state.process.state === 'WASHING' ? 'text-purple-700 border-purple-400 bg-purple-100' : 'text-slate-600 border-slate-300 bg-slate-200'}`}>
             {state.process.state}
           </span>
         </div>
-        <div className="w-px h-5 bg-slate-200" />
+        <div className="w-px h-5 bg-slate-300" />
         <KVPair k="HATTA" v={`${state.process.bottlesInArea} / ${state.process.targetBottles}`} textColor="text-slate-800" />
-        <div className="w-px h-5 bg-slate-200" />
-        <KVPair k="GİRİŞ SAYACI" v={String(inSensor?.count ?? 0)} textColor="text-emerald-600" />
-        <div className="w-px h-5 bg-slate-200" />
-        <KVPair k="ÇIKIŞ SAYACI" v={String(outSensor?.count ?? 0)} textColor="text-blue-600" />
+        <div className="w-px h-5 bg-slate-300" />
+        <KVPair k="GİRİŞ SAYACI" v={String(inSensor?.count ?? 0)} textColor="text-emerald-700" />
+        <div className="w-px h-5 bg-slate-300" />
+        <KVPair k="ÇIKIŞ SAYACI" v={String(outSensor?.count ?? 0)} textColor="text-blue-700" />
         
         <div className="ml-auto flex gap-4">
           {state.systemRunning && <span className="text-[10px] font-black tracking-widest text-emerald-600 flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"/>ÇALIŞIYOR</span>}
@@ -274,29 +274,29 @@ function ConsoleView({ state }: { state: SystemState }) {
       <div className="flex-1 flex overflow-hidden min-h-0 relative">
         
         {/* ── LEFT: DEVICE STATUS ── */}
-        <div className="w-[38%] md:w-[35%] border-r border-slate-200 flex flex-col overflow-hidden shrink-0 bg-white relative z-10 shadow-[4px_0_24px_-12px_rgba(0,0,0,0.05)]">
+        <div className="w-[38%] md:w-[35%] border-r border-slate-300 flex flex-col overflow-hidden shrink-0 bg-slate-100 relative z-10 shadow-[4px_0_24px_-12px_rgba(0,0,0,0.08)]">
           <SectionHeader text={`CİHAZ LİSTESİ (${state.devices.length})`} />
           
           <div className="flex-1 overflow-y-auto px-4 py-2 flex flex-col gap-1.5">
             {state.devices.length === 0 ? (
-              <div className="p-4 text-[11px] font-bold text-slate-400">Cihaz bulunamadı.</div>
+              <div className="p-4 text-[11px] font-bold text-slate-500">Cihaz bulunamadı.</div>
             ) : state.devices.map(dev => {
-              const typeColor = dev.type === 'valve' ? 'text-blue-500' : dev.type === 'laser_sensor' ? 'text-amber-500' : 'text-purple-500';
+              const typeColor = dev.type === 'valve' ? 'text-blue-600' : dev.type === 'laser_sensor' ? 'text-amber-600' : 'text-purple-600';
               return (
-                <div key={dev.id} className={`px-3 py-2 flex items-center gap-3 border rounded-lg transition-colors ${dev.active ? 'bg-emerald-50 border-emerald-200' : 'bg-transparent border-slate-100'}`}>
-                  <div className={`w-2 h-2 rounded-full ${dev.active ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'border border-slate-300'}`} />
+                <div key={dev.id} className={`px-3 py-2 flex items-center gap-3 border rounded-lg transition-colors ${dev.active ? 'bg-emerald-100/50 border-emerald-300' : 'bg-slate-200/50 border-slate-300'}`}>
+                  <div className={`w-2 h-2 rounded-full ${dev.active ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'border border-slate-400'}`} />
                   <span className={`text-[10px] font-black tracking-wider w-4 ${typeColor}`}>{dev.type === 'valve' ? 'V' : dev.type === 'laser_sensor' ? 'L' : 'M'}</span>
-                  <span className="text-[11px] font-bold text-slate-700 flex-1 truncate">{dev.name}</span>
-                  <span className="text-[9px] font-bold text-slate-400 shrink-0 uppercase">{dev.target}/{dev.pin}</span>
-                  <span className={`text-[10px] font-black w-8 text-right shrink-0 ${dev.active ? 'text-emerald-700' : 'text-slate-400'}`}>{dev.active ? 'ON' : 'OFF'}</span>
+                  <span className="text-[11px] font-bold text-slate-800 flex-1 truncate">{dev.name}</span>
+                  <span className="text-[9px] font-bold text-slate-500 shrink-0 uppercase">{dev.target}/{dev.pin}</span>
+                  <span className={`text-[10px] font-black w-8 text-right shrink-0 ${dev.active ? 'text-emerald-700' : 'text-slate-500'}`}>{dev.active ? 'ON' : 'OFF'}</span>
                 </div>
               );
             })}
           </div>
 
           {/* ── CRITICAL PANEL (Solenoid Valfler & Sensörler) ── */}
-          <div className="border-t border-slate-200 bg-slate-50 p-5 shrink-0 flex flex-col gap-4">
-            <div className="text-[10px] font-black text-slate-500 tracking-widest uppercase mb-1 flex items-center gap-2">
+          <div className="border-t border-slate-300 bg-slate-200 p-5 shrink-0 flex flex-col gap-4">
+            <div className="text-[10px] font-black text-slate-600 tracking-widest uppercase mb-1 flex items-center gap-2">
               <Activity className="w-3.5 h-3.5 text-slate-400" />
               <span>SİSTEM BİLEŞENLERİ</span>
             </div>
@@ -310,11 +310,11 @@ function ConsoleView({ state }: { state: SystemState }) {
                 { k:'LAZER ÇIKIŞ',  d:outSensor, errOnActive:true },
               ] as { k:string; d:Device|undefined; errOnActive:boolean }[]).map(({k,d,errOnActive}) => {
                 const on = !!d?.active;
-                const activeColor = errOnActive ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-emerald-300 bg-emerald-50 text-emerald-700';
+                const activeColor = errOnActive ? 'border-amber-400 bg-amber-100 text-amber-800' : 'border-emerald-400 bg-emerald-100 text-emerald-800';
                 return (
-                  <div key={k} className={`border rounded-md px-2 py-2 flex flex-col items-center justify-center transition-colors ${on ? activeColor : 'border-slate-200 bg-white text-slate-500'}`}>
+                  <div key={k} className={`border rounded-md px-2 py-2 flex flex-col items-center justify-center transition-colors ${on ? activeColor : 'border-slate-300 bg-slate-100/80 text-slate-500'}`}>
                     <span className="text-[8px] font-black tracking-wider uppercase mb-1 text-center leading-tight">{k}</span>
-                    <span className={`text-[11px] font-black ${on ? '' : 'text-slate-300'}`}>{on ? 'ON' : 'OFF'}</span>
+                    <span className={`text-[11px] font-black ${on ? '' : 'text-slate-400'}`}>{on ? 'ON' : 'OFF'}</span>
                   </div>
                 );
               })}
@@ -323,16 +323,16 @@ function ConsoleView({ state }: { state: SystemState }) {
             {/* Solenoid Valfler */}
             <div className="flex flex-col gap-2 mt-1">
               <div className="flex justify-between items-center px-1">
-                <span className="text-[9px] font-black text-slate-500 tracking-widest uppercase">SOLENOİD VALFLER ({valves.length})</span>
-                <span className="text-[10px] font-bold text-slate-400">{valves.filter(v=>v.active).length} Aktif</span>
+                <span className="text-[9px] font-black text-slate-600 tracking-widest uppercase">SOLENOİD VALFLER ({valves.length})</span>
+                <span className="text-[10px] font-bold text-slate-500">{valves.filter(v=>v.active).length} Aktif</span>
               </div>
               <div className="flex gap-2 flex-wrap">
                 {valves.map((v, i) => (
-                  <div key={v.id} className={`w-8 h-8 rounded border flex flex-col items-center justify-center transition-all ${v.active ? 'bg-blue-500 border-blue-600 text-white shadow-md scale-105' : 'bg-white border-slate-200 text-slate-400'}`}>
+                  <div key={v.id} className={`w-8 h-8 rounded border flex flex-col items-center justify-center transition-all ${v.active ? 'bg-blue-600 border-blue-700 text-white shadow-[0_4px_10px_rgba(37,99,235,0.4)] scale-105' : 'bg-slate-100 border-slate-300 text-slate-500'}`}>
                     <span className="text-[11px] font-black leading-none">{i+1}</span>
                   </div>
                 ))}
-                {valves.length === 0 && <span className="text-[10px] text-slate-400 italic font-bold">Valf tanımlanmamış.</span>}
+                {valves.length === 0 && <span className="text-[10px] text-slate-500 italic font-bold">Valf tanımlanmamış.</span>}
               </div>
             </div>
             
@@ -340,12 +340,12 @@ function ConsoleView({ state }: { state: SystemState }) {
         </div>
 
         {/* ── RIGHT: LIVE LOG ── */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-slate-50 relative">
+        <div className="flex-1 flex flex-col overflow-hidden bg-slate-200 relative">
           <SectionHeader text="CANLI OLAY KAYDI" />
           <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-1">
             {logs.map(log => (
-              <div key={log.id} className="flex gap-4 text-[11px] leading-relaxed group hover:bg-white/60 px-2 py-1 rounded">
-                <span className="text-slate-400 font-bold shrink-0">{log.ts}</span>
+              <div key={log.id} className="flex gap-4 text-[11px] leading-relaxed group hover:bg-slate-300/50 px-2 py-1 rounded">
+                <span className="text-slate-500 font-bold shrink-0">{log.ts}</span>
                 <span className={`${LEVEL_COLOR[log.level]} font-black w-10 shrink-0`}>{log.level}</span>
                 <span className={`${LOG_TEXT[log.level]} flex-1`}>{log.msg}</span>
               </div>
@@ -354,7 +354,7 @@ function ConsoleView({ state }: { state: SystemState }) {
           </div>
           
           {/* Overlay gradient for aesthetics */}
-          <div className="absolute bottom-0 left-0 right-0 h-4 bg-gradient-to-t from-slate-50 to-transparent pointer-events-none" />
+          <div className="absolute bottom-0 left-0 right-0 h-4 bg-gradient-to-t from-slate-200 to-transparent pointer-events-none" />
         </div>
 
       </div>
@@ -374,8 +374,8 @@ function KVPair({ k, v, textColor }: { k:string; v:string; textColor:string }) {
 
 function SectionHeader({ text }: { text:string }) {
   return (
-    <div className="px-5 py-2.5 border-b border-slate-200 bg-slate-100/50 shrink-0">
-      <span className="text-[10px] font-black text-slate-500 tracking-[0.2em] uppercase">{text}</span>
+    <div className="px-5 py-2.5 border-b border-slate-300 bg-slate-200 shrink-0">
+      <span className="text-[10px] font-black text-slate-600 tracking-[0.2em] uppercase">{text}</span>
     </div>
   );
 }
