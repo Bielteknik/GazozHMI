@@ -54,7 +54,7 @@ const state: SystemState = {
     conveyorSpeed: 80,     // Default %80 Hız
   },
   paused: false,
-  devices: getDevices(), // DB'den yükle
+  devices: [], // startServer içinde yüklenecek
   rawLogs: [],
   notifications: []
 };
