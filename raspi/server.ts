@@ -44,7 +44,8 @@ const state: SystemState = {
     nano: { connected: false, port: ARDUINO_PORT, baudRate: ARDUINO_BAUDRATE, status: 'Bekleniyor...' },
   },
   config: {
-    fillWaitTime: 1000,
+    targetVolumeML: 40,    // Default 40 ML
+    baseFlowRateMs: 50,    // Default 50ms per ML (2 sec for 40 ML)
     sensorTimeout: 30000,
     dailyQuota: 10000,
   },
@@ -145,10 +146,15 @@ function startAutonomousFilling() {
   setTimeout(() => {
     // Nano'ya hangi valfleri ne kadar süreyle açacağını hesaplayıp gönder
     const fillCmdParts: string[] = [];
+    const targetML = state.config.targetVolumeML || 40;
+    const baseFlowRate = state.config.baseFlowRateMs || 50;
+
     for (let i = 1; i <= state.process.targetBottles; i++) {
        const valve = findDeviceByRole(`valve_${i}`);
-       if (valve && valve.target === 'nano' && valve.fillDurationMs) {
-         fillCmdParts.push(`${valve.pin}=${valve.fillDurationMs}`);
+       if (valve && valve.target === 'nano') {
+         const valveRate = valve.fillDurationMs || baseFlowRate; 
+         const computedMs = Math.round(targetML * valveRate);
+         fillCmdParts.push(`${valve.pin}=${computedMs}`);
        }
     }
     
@@ -198,7 +204,8 @@ async function startServer() {
   // Config Yükle
   const saved = loadConfig();
   if (saved.targetBottles) state.process.targetBottles = parseInt(saved.targetBottles);
-  if (saved.fillWaitTime) state.config.fillWaitTime = parseInt(saved.fillWaitTime);
+  if (saved.targetVolumeML) state.config.targetVolumeML = parseInt(saved.targetVolumeML);
+  if (saved.baseFlowRateMs) state.config.baseFlowRateMs = parseInt(saved.baseFlowRateMs);
   if (saved.sensorTimeout) state.config.sensorTimeout = parseInt(saved.sensorTimeout);
   if (saved.dailyQuota) state.config.dailyQuota = parseInt(saved.dailyQuota);
 
@@ -342,9 +349,13 @@ async function startServer() {
       state.process.targetBottles = updates.targetBottles;
       saveConfig('targetBottles', updates.targetBottles.toString());
     }
-    if (updates.fillWaitTime !== undefined) {
-      state.config.fillWaitTime = updates.fillWaitTime;
-      saveConfig('fillWaitTime', updates.fillWaitTime.toString());
+    if (updates.targetVolumeML !== undefined) {
+      state.config.targetVolumeML = updates.targetVolumeML;
+      saveConfig('targetVolumeML', updates.targetVolumeML.toString());
+    }
+    if (updates.baseFlowRateMs !== undefined) {
+      state.config.baseFlowRateMs = updates.baseFlowRateMs;
+      saveConfig('baseFlowRateMs', updates.baseFlowRateMs.toString());
     }
     if (updates.sensorTimeout !== undefined) {
       state.config.sensorTimeout = updates.sensorTimeout;

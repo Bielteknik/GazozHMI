@@ -16,7 +16,8 @@ export interface SystemState {
   };
   
   config: {
-    fillWaitTime: number;
+    targetVolumeML: number;
+    baseFlowRateMs: number;
     sensorTimeout: number;
     dailyQuota: number;
   };

@@ -438,13 +438,25 @@ function MainTabButton({ active, onClick, label }: { active: boolean; onClick: (
 }
 
 function ProcessSettingsView({ state, apiCall }: { state: SystemState; apiCall: any }) {
+  const tVol = state.config.targetVolumeML || 40;
+  const tRate = state.config.baseFlowRateMs || 50;
+
   return (
     <div className="flex flex-col gap-6">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <InputComponent label="Hattaki Hedef Şişe" value={state.process.targetBottles} unit="ADET" onChange={v => apiCall('/api/config', { targetBottles: v })} disabled={state.systemRunning} />
-        <InputComponent label="Kanal Dolum Süresi" value={state.config.fillWaitTime} unit="MS" onChange={v => apiCall('/api/config', { fillWaitTime: v })} disabled={state.systemRunning} />
         <InputComponent label="Sensör Zaman Aşımı" value={state.config.sensorTimeout} unit="MS" onChange={v => apiCall('/api/config', { sensorTimeout: v })} disabled={state.systemRunning} />
+        <InputComponent label="Hedef Şişe Dolum Hacmi" value={tVol} unit="ML" onChange={v => apiCall('/api/config', { targetVolumeML: v })} disabled={state.systemRunning} />
+        <InputComponent label="Birim Valf Debi Katsayısı" value={tRate} unit="MS / 1 ML" onChange={v => apiCall('/api/config', { baseFlowRateMs: v })} disabled={state.systemRunning} />
         <InputComponent label="Vardiya Kotası" value={state.config.dailyQuota} unit="ŞİŞE" onChange={v => apiCall('/api/config', { dailyQuota: v })} disabled={state.systemRunning} />
+      </div>
+
+      <div className={`p-4 border border-blue-200 bg-blue-50 text-blue-800 ${RADIUS} flex justify-between items-center shadow-sm`}>
+        <div className="flex flex-col">
+          <span className="text-[10px] font-black uppercase tracking-widest text-blue-500">Mevcut Kalibrasyon Sonucu</span>
+          <span className="text-sm font-bold mt-0.5">Her valf ortalama <span className="text-blue-700 font-black">{tVol * tRate} MS</span> açık kalarak <span className="text-blue-700 font-black">{tVol} ML</span> sıvı dolduracak.</span>
+        </div>
+        <Droplet className="w-8 h-8 text-blue-400 opacity-50" />
       </div>
 
       <div className={`p-6 bg-white border border-slate-200 shadow-sm ${RADIUS} relative overflow-hidden mt-2`}>
@@ -496,6 +508,7 @@ function WashActionBtn({ label, sub, onClick, disabled, primary }: { label: stri
 
 function HardwareInventoryView({ state, apiCall }: { state: SystemState; apiCall: any }) {
   const [isAdding, setIsAdding] = useState(false);
+  const [editId, setEditId] = useState<string|null>(null);
   const [form, setForm] = useState<Partial<Device>>({ type: 'valve', target: 'nano', role: 'none', pin: '', name: '' });
 
   return (
@@ -510,7 +523,7 @@ function HardwareInventoryView({ state, apiCall }: { state: SystemState; apiCall
             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide mt-0.5">{state.devices.length} DONANIM BAĞLI</span>
           </div>
         </div>
-        <button onClick={() => setIsAdding(true)} disabled={state.systemRunning} className={`h-10 px-5 bg-blue-600 text-white font-bold text-[11px] uppercase tracking-wider shadow-md hover:bg-blue-700 active:scale-95 transition-all ${RADIUS} disabled:opacity-40 flex items-center gap-2`}>
+        <button onClick={() => { setForm({ type: 'valve', target: 'nano', role: 'none', pin: '', name: '' }); setEditId(null); setIsAdding(true); }} disabled={state.systemRunning} className={`h-10 px-5 bg-blue-600 text-white font-bold text-[11px] uppercase tracking-wider shadow-md hover:bg-blue-700 active:scale-95 transition-all ${RADIUS} disabled:opacity-40 flex items-center gap-2`}>
           <PlusCircle className="w-4 h-4" /> YENİ BİRİM
         </button>
       </div>
@@ -553,8 +566,8 @@ function HardwareInventoryView({ state, apiCall }: { state: SystemState; apiCall
             </FormGroup>
           </div>
           <div className="flex justify-end gap-3 pt-2 mt-2 border-t border-slate-100">
-            <button onClick={()=>setIsAdding(false)} className={`px-6 h-10 text-[11px] font-black text-slate-500 hover:bg-slate-100 transition-colors ${RADIUS}`}>İPTAL ET</button>
-            <button onClick={() => { apiCall('/api/devices', { device: { ...form, id: Math.random().toString(36).substr(2, 9) } }); setIsAdding(false); }} className={`px-8 h-10 bg-blue-600 text-white text-[11px] font-black uppercase shadow-md hover:bg-blue-700 transition-colors ${RADIUS}`}>KAYDET</button>
+            <button onClick={()=>{ setIsAdding(false); setEditId(null); }} className={`px-6 h-10 text-[11px] font-black text-slate-500 hover:bg-slate-100 transition-colors ${RADIUS}`}>İPTAL ET</button>
+            <button onClick={() => { apiCall('/api/devices', { device: { ...form, id: editId || Math.random().toString(36).substr(2, 9) } }); setIsAdding(false); setEditId(null); }} className={`px-8 h-10 bg-blue-600 text-white text-[11px] font-black uppercase shadow-md hover:bg-blue-700 transition-colors ${RADIUS}`}>{editId ? 'GÜNCELLE' : 'KAYDET'}</button>
           </div>
         </div>
       )}
@@ -579,6 +592,7 @@ function HardwareInventoryView({ state, apiCall }: { state: SystemState; apiCall
               </div>
             </div>
             <div className="flex gap-2 shrink-0 ml-4">
+              <button disabled={state.systemRunning} onClick={() => { setForm(dev); setEditId(dev.id); setIsAdding(true); }} className={`h-9 px-4 text-[10px] font-black border border-blue-200 bg-blue-50 text-blue-600 hover:border-blue-400 hover:bg-blue-100 transition-all ${RADIUS}`}>DÜZENLE</button>
               <button onClick={() => apiCall(`/api/devices/${dev.id}/trigger`, {})} className={`h-9 px-4 text-[10px] font-black border border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-400 hover:bg-white transition-all ${RADIUS}`}>TEST</button>
               <button disabled={state.systemRunning} onClick={() => apiCall(`/api/devices/${dev.id}`, {}, 'DELETE')} className={`h-9 px-3 border border-rose-100 bg-rose-50 text-rose-500 hover:bg-rose-500 hover:text-white transition-all ${RADIUS} disabled:opacity-40 disabled:pointer-events-none group`} title="Cihazı Sil">
                 <Trash2 className="w-3.5 h-3.5" />
