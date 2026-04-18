@@ -131,13 +131,14 @@ export class ArduinoManager extends EventEmitter {
       }
 
       console.log(`[Arduino] → ${cmd.trim()}`);
+      this.emit('command', cmd.trim());
       this.portInstance.write(fullCmd, (err: Error | null) => {
         resolve(err ? `ERR:${err.message}` : `OK:${cmd.trim()}`);
       });
     });
   }
 
-  async listPorts(): Promise<{ path: string; manufacturer?: string }[]> {
+  async listPorts(): Promise<any[]> {
     try {
       const { SerialPort } = await import('serialport');
       return await SerialPort.list();

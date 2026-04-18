@@ -1,6 +1,7 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { SystemState, Device } from './src/types';
 import {
@@ -53,11 +54,84 @@ const state: SystemState = {
     conveyorSpeed: 80,     // Default %80 Hız
   },
   paused: false,
-  devices: [],
+  devices: getDevices(), // DB'den yükle
+  rawLogs: [],
+  notifications: []
 };
+
+// ─── AKILLI PORT ANALİZİ ───────────────────────────────────────────────────
+function analyzeLikelyPLC(port: any): boolean {
+  const p = port.path.toLowerCase();
+  const m = (port.manufacturer || '').toLowerCase();
+  const v = (port.vendorId || '').toLowerCase();
+  
+  // Bilinen PLC/Arduino VID'leri ve Üreticileri
+  const plcKeywords = ['arduino', 'ch340', 'cp210', 'ftdi', 'usb-serial', 'ttyusb', 'ttyacm'];
+  const plcVids     = ['2341', '1a86', '0403', '10c4']; // Arduino, CH340, FTDI, CP210x
+
+  return plcKeywords.some(k => p.includes(k) || m.includes(k)) || plcVids.includes(v);
+}
+
+let lastKnownPorts: string[] = [];
+async function scanPortsAndNotify() {
+  try {
+    const ports = await arduino.listPorts();
+    const currentPaths = ports.map(p => p.path);
+    
+    // Yeni takılanları bul
+    const newPorts = ports.filter(p => !lastKnownPorts.includes(p.path));
+    
+    for (const p of newPorts) {
+      if (analyzeLikelyPLC(p)) {
+        const notify = {
+          id: Math.random().toString(36).substr(2, 9),
+          type: 'success' as const,
+          title: 'YENİ DONANIM ALGILANDI',
+          message: `PLC Sürücüsü (Arduino/Nano) ${p.path} portuna bağlandı. Terminalden seçim yapabilirsiniz.`,
+          timestamp: new Date().toISOString()
+        };
+        state.notifications = [notify, ...state.notifications].slice(0, 10);
+        console.log(`[HMI] Yeni PLC algılandı: ${p.path}`);
+      }
+    }
+    
+    lastKnownPorts = currentPaths;
+  } catch (e) {
+    console.error('[HMI] Port tarama hatası:', e);
+  }
+}
+
+// 4 saniyede bir arka planda tara
+setInterval(scanPortsAndNotify, 4000);
+
+// ─── LOGGING MEKANİZMASI ───────────────────────────────────────────────────
+const LOG_DIR = path.join(__dirname, 'logs');
+if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });
+
+function logComm(direction: 'IN' | 'OUT' | 'INTERNAL', source: 'RPI' | 'NANO' | 'SENSOR' | 'SYSTEM', msg: string, level: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' = 'INFO') {
+  const logEntry = {
+    id: Math.random().toString(36).substr(2, 9),
+    timestamp: new Date().toISOString(),
+    direction,
+    source,
+    msg,
+    level
+  };
+
+  // UI Buffer Güncelle (Son 100 kayıt)
+  state.rawLogs = [logEntry, ...state.rawLogs].slice(0, 100);
+
+  // Dosya Kaydı (Günlük JSONL formatı - Performans için her satır bir JSON)
+  const dateStr = new Date().toISOString().split('T')[0];
+  const logFile = path.join(LOG_DIR, `comm_${dateStr}.json`);
+  fs.appendFile(logFile, JSON.stringify(logEntry) + '\n', (err) => {
+    if (err) console.error('[LOG] Yazma hatası:', err);
+  });
+}
 
 // ─── Arduino Master Yöneticisi ────────────────────────────────────────────────
 let arduino: ArduinoManager;
+let terminalArduino: ArduinoManager | null = null;
 
 // ─── Raspi GPIO (Sensörler) Olay Dinleyicileri (Event Driven) ─────────────────
 const gpioInstances: Record<string, any> = {};
@@ -81,27 +155,30 @@ function setupGpioWatchers() {
           if (err) return;
           if (!state.systemRunning) return;
 
-          if (dev.role === 'entry_laser' && state.process.state === 'WAITING_ENTRY') {
-            dev.count = (dev.count || 0) + 1;
-            dev.active = true; setTimeout(() => { dev.active = false; }, 200);
-            state.process.bottlesInArea = dev.count;
+            if (dev.role === 'entry_laser' && state.process.state === 'WAITING_ENTRY') {
+              logComm('IN', 'SENSOR', `Giriş Lazeri Tetiklendi. Sayım: ${dev.count + 1}`, 'DEBUG');
+              dev.count = (dev.count || 0) + 1;
+              dev.active = true; setTimeout(() => { dev.active = false; }, 200);
+              state.process.bottlesInArea = dev.count;
 
-            if (state.process.bottlesInArea >= state.process.targetBottles) {
-              dev.count = 0; // Sıfırla
-              startAutonomousFilling();
+              if (state.process.bottlesInArea >= state.process.targetBottles) {
+                dev.count = 0; // Sıfırla
+                startAutonomousFilling();
+              }
+            } 
+            else if (dev.role === 'exit_laser' && state.process.state === 'WAITING_EXIT') {
+              logComm('IN', 'SENSOR', `Çıkış Lazeri Tetiklendi. Sayım: ${dev.count + 1}`, 'DEBUG');
+              dev.count = (dev.count || 0) + 1;
+              dev.active = true; setTimeout(() => { dev.active = false; }, 200);
+              
+              if (dev.count >= state.process.targetBottles) {
+                dev.count = 0;
+                finishCycle();
+              }
             }
-          } 
-          else if (dev.role === 'exit_laser' && state.process.state === 'WAITING_EXIT') {
-            dev.count = (dev.count || 0) + 1;
-            dev.active = true; setTimeout(() => { dev.active = false; }, 200);
-            
-            if (dev.count >= state.process.targetBottles) {
-              dev.count = 0;
-              finishCycle();
-            }
-          }
-        });
-        console.log(`[GPIO] Raspi sensörü ${dev.name} pine bağlandı: ${pinNum}`);
+          });
+          logComm('INTERNAL', 'SYSTEM', `GPIO Sensörü ${dev.name} pine bağlandı: ${pinNum}`, 'INFO');
+          console.log(`[GPIO] Raspi sensörü ${dev.name} pine bağlandı: ${pinNum}`);
       } catch (e: any) {
         console.error(`[GPIO] Cihaz bağlanamadı: ${dev.name}`, e.message);
       }
@@ -221,6 +298,7 @@ async function startServer() {
   arduino.on('connected', async () => {
     state.hardware.nano.connected = true;
     state.hardware.nano.status    = 'Bağlı';
+    logComm('INTERNAL', 'SYSTEM', `PLC Driver (Nano) USB üzerinden bağlandı: ${ARDUINO_PORT}`, 'INFO');
     addAlarm('INFO', `PLC OUT Driver bağlandı: ${ARDUINO_PORT}`);
     
     // Nano'ya cihaz konfigürasyonlarını yolla
@@ -237,10 +315,16 @@ async function startServer() {
     state.hardware.nano.status    = 'Bağlantı Kesildi';
     state.hasError = true;
     state.systemRunning = false;
+    logComm('INTERNAL', 'SYSTEM', 'PLC Driver (Nano) bağlantısı kesildi!', 'ERROR');
     addAlarm('MOTOR_FAULT', 'PLC OUT Driver bağlantısı kesildi!');
   });
 
+  arduino.on('command', (cmd: string) => {
+    logComm('OUT', 'RPI', cmd, 'DEBUG');
+  });
+
   arduino.on('data', (line: string) => {
+    logComm('IN', 'NANO', line, line.startsWith('ERR:') ? 'ERROR' : 'INFO');
     if (line === 'FILL_DONE' && state.process.state === 'FILLING') {
       state.process.state = 'WAITING_EXIT';
       console.log('[SÜREÇ] Dolumlar Tamamlandı. Çıkış bekleniyor.');
@@ -266,6 +350,7 @@ async function startServer() {
   app.post('/api/estop', (req, res) => {
     state.emergencyStop = req.body.active;
     if (state.emergencyStop) {
+      logComm('INTERNAL', 'SYSTEM', 'ACİL STOP AKTİF EDİLDİ!', 'ERROR');
       state.systemRunning = false;
       state.process.state = 'IDLE';
       addAlarm('ESTOP', 'Acil stop butonu etkinleştirildi!');
@@ -286,6 +371,7 @@ async function startServer() {
     state.systemRunning = req.body.running;
     
     if (state.systemRunning && !wasRunning) {
+      logComm('INTERNAL', 'SYSTEM', 'Üretim Hattı Başlatıldı', 'INFO');
       // Sistemi Başlat
       state.process.state = 'WAITING_ENTRY';
       state.process.bottlesInArea = 0;
@@ -294,6 +380,7 @@ async function startServer() {
       openEntryGate();
     } 
     else if (!state.systemRunning && wasRunning) {
+      logComm('INTERNAL', 'SYSTEM', 'Üretim Hattı Durduruldu', 'WARN');
       // Sistemi Durdur
       state.process.state = 'IDLE';
       closeEntryGate();
@@ -471,12 +558,50 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  app.post('/api/terminal/sandbox/connect', async (req, res) => {
+    const { port, baud } = req.body;
+    
+    if (terminalArduino) await terminalArduino.disconnect();
+    
+    terminalArduino = new ArduinoManager(port, parseInt(baud), false);
+    
+    terminalArduino.on('command', (cmd) => {
+      logComm('OUT', 'SANDBOX', cmd, 'DEBUG');
+    });
+    
+    terminalArduino.on('data', (line) => {
+      logComm('IN', 'SANDBOX', line, line.startsWith('ERR:') ? 'ERROR' : 'INFO');
+    });
+
+    // Bağlantı bekleme (opsiyonel simülasyon gecikmesi için)
+    setTimeout(() => {
+      res.json({ success: true, port, baud });
+    }, 500);
+  });
+
+  app.post('/api/terminal/sandbox/disconnect', async (req, res) => {
+    if (terminalArduino) {
+      await terminalArduino.disconnect();
+      terminalArduino = null;
+    }
+    res.json({ success: true });
+  });
+
+  app.get('/api/terminal/sandbox/status', (req, res) => {
+    if (!terminalArduino) return res.json({ connected: false });
+    res.json({
+      connected: terminalArduino.isConnected,
+      port: terminalArduino.port,
+      baud: terminalArduino.baud
+    });
+  });
+
   app.post('/api/terminal', async (req, res) => {
     const { target, command } = req.body;
     let response = '';
     if (target === 'nano') {
-      if (!arduino.isConnected) response = 'ERR: Arduino bağlı değil';
-      else response = await arduino.sendCommand(command);
+      if (!terminalArduino || !terminalArduino.isConnected) response = 'ERR: Sandbox Terminal bağlı değil';
+      else response = await terminalArduino.sendCommand(command);
     } else {
       response = `bash: ${command}: komut bulunamadı`;
     }
@@ -492,13 +617,25 @@ async function startServer() {
   });
 
   app.get('/api/hardware/ports', async (_req, res) => {
-    const ports = await arduino.listPorts();
-    res.json(ports);
+    const rawPorts = await arduino.listPorts();
+    const enrichedPorts = rawPorts.map(p => ({
+      ...p,
+      isLikelyPLC: analyzeLikelyPLC(p)
+    }));
+    res.json(enrichedPorts);
   });
 
   // Vite
   if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
+    const vite = await createViteServer({ 
+      server: { 
+        middlewareMode: true,
+        watch: {
+          ignored: ['**/logs/**']
+        }
+      }, 
+      appType: 'spa' 
+    });
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(__dirname, 'dist');

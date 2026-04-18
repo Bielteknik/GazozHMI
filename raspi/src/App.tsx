@@ -4,7 +4,7 @@ import {
   Play, Square, Lock, Unlock, Timer, Terminal, History, Bell,
   PlusCircle, Trash2, Cpu as Microchip, LayoutDashboard, Map as MapIcon, RefreshCw, Layers, Shield
 } from 'lucide-react';
-import { SystemState, Device } from './types';
+import { SystemState, Device, SystemNotification } from './types';
 
 // Design Tokens
 const RADIUS = "rounded-lg"; // 8px
@@ -115,7 +115,14 @@ export default function App() {
         <main className="flex-1 min-h-0 relative bg-[#fcfcfd]">
           {state.emergencyStop && <EmergencyShutter onReset={() => apiCall('/api/estop', { active: false })} />}
           
-          {activeTab === 'dashboard' && <DashboardView state={state} />}
+          {/* Global Notifications (Toast Overlay) */}
+          <div className="absolute top-4 right-4 z-[100] flex flex-col gap-3 pointer-events-none">
+            {state.notifications?.map(n => (
+              <NotificationToast key={n.id} notification={n} />
+            ))}
+          </div>
+
+          {activeTab === 'dashboard' && <DashboardView state={state} apiCall={apiCall} />}
           {activeTab === 'system'    && <SettingsView  state={state} apiCall={apiCall} />}
         </main>
       </div>
@@ -153,17 +160,20 @@ function SystemToggle({ running, disabled, onClick }: { running: boolean; disabl
 
 // ─── DASHBOARD VIEW ──────────────────────────────────
 
-function DashboardView({ state }: { state: SystemState }) {
-  const [subTab, setSubTab] = useState<'console' | 'map'>('console');
+function DashboardView({ state, apiCall }: { state: SystemState; apiCall: any }) {
+  const [subTab, setSubTab] = useState<'console' | 'map' | 'terminal'>('console');
 
   return (
     <div className="h-full flex flex-col">
       <div className="flex bg-white border-b border-slate-100">
-        <SubTab active={subTab === 'console'} onClick={() => setSubTab('console')} label="CANLI KONSOL" />
-        <SubTab active={subTab === 'map'}     onClick={() => setSubTab('map')}     label="DONANIM ENVANTERİ" />
+        <SubTab active={subTab === 'console'}  onClick={() => setSubTab('console')}  icon={<Activity className="w-3.5 h-3.5" />} label="CANLI KONSOL" />
+        <SubTab active={subTab === 'map'}      onClick={() => setSubTab('map')}      icon={<MapIcon className="w-3.5 h-3.5" />} label="DONANIM ENVANTERİ" />
+        <SubTab active={subTab === 'terminal'} onClick={() => setSubTab('terminal')} icon={<Terminal className="w-3.5 h-3.5" />} label="PLC DRIVER TERMİNAL" />
       </div>
       <div className="flex-1 relative" style={{ minHeight: 0 }}>
-        {subTab === 'console' ? <ConsoleView state={state} /> : <HardwareList state={state} />}
+        {subTab === 'console'  && <ConsoleView state={state} />}
+        {subTab === 'map'      && <HardwareList state={state} />}
+        {subTab === 'terminal' && <PLCTerminalView state={state} apiCall={apiCall} />}
       </div>
     </div>
   );
@@ -185,10 +195,11 @@ function AnalyticCard({ label, value, icon }: { label: string; value: string; ic
   );
 }
 
-function SubTab({ active, onClick, label }: { active: boolean; onClick: () => void; label: string; }) {
+function SubTab({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; }) {
   return (
-    <button onClick={onClick} className={`h-11 px-4 font-black text-[10px] tracking-widest transition-all relative ${active ? 'text-slate-900' : 'text-slate-300 hover:text-slate-500'}`}>
-      {label}
+    <button onClick={onClick} className={`h-11 px-4 flex items-center gap-2 font-black text-[10px] tracking-widest transition-all relative ${active ? 'text-slate-900' : 'text-slate-300 hover:text-slate-500'}`}>
+      {icon}
+      <span>{label}</span>
       {active && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 rounded-full" />}
     </button>
   );
@@ -465,6 +476,232 @@ function MainTabButton({ active, onClick, label }: { active: boolean; onClick: (
   );
 }
 
+// ─── PLC TERMINAL VIEW ──────────────────────────────────────
+
+function PLCTerminalView({ state, apiCall }: { state: SystemState; apiCall: any }) {
+  const [cmd, setCmd] = useState('');
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [ports, setPorts] = useState<{path:string}[]>([]);
+  const [selPort, setSelPort] = useState('');
+  const [selBaud, setSelBaud] = useState('115200');
+  const [sbStatus, setSbStatus] = useState<{connected:boolean, port?:string, baud?:number}>({ connected: false });
+  const [isConnecting, setIsConnecting] = useState(false);
+  
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // Portları ve mevcut durumu yükle
+    apiCall('/api/hardware/ports').then((data: any) => {
+       const portsData = data || [];
+       setPorts(portsData);
+       
+       // Otomatik seçme mantığı:
+       // Eğer bağlı değilsek ve TEK bir ihtimalli PLC varsa onu seç
+       if (!sbStatus.connected) {
+         const likely = portsData.filter((p: any) => p.isLikelyPLC);
+         if (likely.length === 1 && !selPort) {
+           setSelPort(likely[0].path);
+         } else if (portsData.length > 0 && !selPort) {
+           setSelPort(portsData[0].path);
+         }
+       }
+    });
+    refreshStatus();
+  }, [state.notifications.length]); // Bildirim geldiğinde (yeni cihaz takıldığında) listeyi yenile
+
+  const refreshStatus = () => {
+    fetch('/api/terminal/sandbox/status').then(r => r.json()).then(data => setSbStatus(data));
+  };
+
+  useEffect(() => {
+    if (autoScroll) {
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+    }
+  }, [state.rawLogs, autoScroll]);
+
+  const handleToggleConnect = async () => {
+    setIsConnecting(true);
+    if (sbStatus.connected) {
+      await apiCall('/api/terminal/sandbox/disconnect', {});
+    } else {
+      await apiCall('/api/terminal/sandbox/connect', { port: selPort, baud: selBaud });
+    }
+    refreshStatus();
+    setIsConnecting(false);
+  };
+
+  const handleSend = (overrideCmd?: string) => {
+    const finalCmd = overrideCmd || cmd;
+    if (!finalCmd.trim() || !sbStatus.connected) return;
+    apiCall('/api/terminal', { target: 'nano', command: finalCmd });
+    if (!overrideCmd) setCmd('');
+  };
+
+  return (
+    <div className="absolute inset-0 flex flex-col bg-slate-900 overflow-hidden font-mono shadow-inner">
+      {/* Terminal Header */}
+      <div className="h-10 bg-slate-800 border-b border-slate-700 flex items-center justify-between px-4 shrink-0">
+        <div className="flex items-center gap-2">
+          <Terminal className="w-4 h-4 text-slate-500" />
+          <span className="text-[10px] text-slate-400 font-bold tracking-widest uppercase">PLC DRIVER CONSOLE</span>
+          {sbStatus.connected && (
+            <div className="ml-4 flex items-center gap-1.5 px-2 py-0.5 bg-emerald-500/10 rounded-full border border-emerald-500/20">
+              <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+              <span className="text-[9px] text-emerald-500 font-black uppercase">LIVE: {sbStatus.port}</span>
+            </div>
+          )}
+        </div>
+        
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-2 cursor-pointer group">
+            <input type="checkbox" checked={autoScroll} onChange={e => setAutoScroll(e.target.checked)} className="sr-only" />
+            <div className={`w-8 h-4 rounded-full transition-all relative ${autoScroll ? 'bg-emerald-600' : 'bg-slate-600'}`}>
+              <div className={`absolute top-1 w-2 h-2 rounded-full bg-white transition-all ${autoScroll ? 'right-1' : 'left-1'}`} />
+            </div>
+            <span className="text-[9px] font-black text-slate-500 group-hover:text-slate-300 uppercase">Auto-Scroll</span>
+          </label>
+        </div>
+      </div>
+
+      {/* Terminal Content */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 flex flex-col gap-0.5">
+        {!state.rawLogs || state.rawLogs.length === 0 ? (
+          <div className="text-slate-600 text-[11px] italic">Haberleşme bekleniyor...</div>
+        ) : [...state.rawLogs].reverse().map(log => (
+          <div key={log.id} className="group flex items-start gap-3 hover:bg-slate-800/50 px-2 py-0.5 rounded transition-colors">
+            <span className="text-slate-500 text-[9px] shrink-0 pt-0.5">[{log.timestamp.split('T')[1].split('.')[0]}]</span>
+            <span className={`text-[10px] font-black shrink-0 w-8 ${log.direction === 'IN' ? 'text-emerald-500' : 'text-blue-500'}`}>
+              {log.direction === 'IN' ? ' << ' : ' >> '}
+            </span>
+            <span className={`text-[10px] font-black shrink-0 w-16 ${log.source === 'NANO' ? 'text-amber-500' : log.source === 'RPI' ? 'text-indigo-400' : 'text-slate-400'}`}>
+              {log.source}
+            </span>
+            <span className={`text-[11px] font-mono whitespace-pre-wrap break-all ${log.level === 'ERROR' ? 'text-rose-500 font-bold' : log.level === 'WARN' ? 'text-amber-400' : 'text-slate-200'}`}>
+              {log.msg}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Quick Actions & Input & Connection */}
+      <div className="p-4 bg-slate-800 border-t border-slate-700 shrink-0 flex flex-col gap-5">
+        
+        {/* Connection Row (Moved Down) */}
+        <div className="flex items-center justify-between bg-slate-900/40 p-2 rounded border border-slate-700/50">
+          <div className="flex items-center gap-3">
+             <div className="flex items-center bg-slate-950 p-1 rounded-md border border-slate-800">
+                <select 
+                  className="bg-transparent text-[10px] font-black text-emerald-500 outline-none border-none px-3 uppercase cursor-pointer"
+                  value={selPort}
+                  onChange={e => setSelPort(e.target.value)}
+                  disabled={sbStatus.connected}
+                >
+                  {ports.map((p: any) => (
+                    <option key={p.path} value={p.path}>
+                       {p.isLikelyPLC ? '⭐ ' : ''}{p.path} {p.manufacturer ? `(${p.manufacturer})` : ''}
+                    </option>
+                  ))}
+                  {ports.length === 0 && <option value="">PORT TARANIYOR...</option>}
+                </select>
+                <div className="w-px h-4 bg-slate-800" />
+                <select 
+                  className="bg-transparent text-[10px] font-black text-amber-500 outline-none border-none px-3 uppercase cursor-pointer"
+                  value={selBaud}
+                  onChange={e => setSelBaud(e.target.value)}
+                  disabled={sbStatus.connected}
+                >
+                  <option value="9600">9600 BAUD</option>
+                  <option value="115200">115200 BAUD</option>
+                </select>
+             </div>
+             <button 
+                onClick={handleToggleConnect}
+                disabled={isConnecting}
+                className={`h-9 px-6 rounded font-black text-[10px] uppercase tracking-widest transition-all shadow-lg ${
+                  sbStatus.connected 
+                    ? 'bg-rose-500/20 text-rose-500 border border-rose-500/40 hover:bg-rose-500/30' 
+                    : 'bg-emerald-600 text-slate-900 hover:bg-emerald-500'
+                }`}
+              >
+                {isConnecting ? '...' : (sbStatus.connected ? 'BAĞLANTIYI KES' : 'PLC SÜRÜCÜYE BAĞLAN')}
+              </button>
+          </div>
+          <button onClick={() => apiCall('/api/hardware/ports').then((p: any) => setPorts(p))} className="text-[9px] font-black text-slate-500 hover:text-indigo-400 transition-colors uppercase">Portları Tara</button>
+        </div>
+
+        {/* Quick Commands Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 opacity-90">
+          {/* Sistem Grubu */}
+          <div className="flex flex-col gap-2">
+            <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1 border-b border-slate-700/50 pb-1">Sistem & Güvenlik</span>
+            <div className="flex flex-wrap gap-2">
+              <QuickCmdBtn label="STATUS" onClick={() => handleSend('STATUS')} color="bg-slate-700 text-slate-200" disabled={!sbStatus.connected} />
+              <QuickCmdBtn label="ESTOP (ACİL)" onClick={() => handleSend('ESTOP')} color="bg-rose-900 text-rose-200" disabled={!sbStatus.connected} />
+              <QuickCmdBtn label="RESET" onClick={() => handleSend('RESET')} color="bg-amber-900 text-amber-200" disabled={!sbStatus.connected} />
+            </div>
+          </div>
+
+          {/* Hareket Grubu */}
+          <div className="flex flex-col gap-2">
+            <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1 border-b border-slate-700/50 pb-1">Mekanizma Kontrol</span>
+            <div className="flex flex-wrap gap-2">
+              <QuickCmdBtn label="GİRİŞ AÇ" onClick={() => handleSend('MOTOR:1:OPEN')} color="bg-indigo-900/50 text-indigo-200" disabled={!sbStatus.connected} />
+              <QuickCmdBtn label="GİRİŞ KAPAT" onClick={() => handleSend('MOTOR:1:CLOSE')} color="bg-indigo-900/50 text-indigo-300" disabled={!sbStatus.connected} />
+              <QuickCmdBtn label="ÇIKIŞ AÇ" onClick={() => handleSend('MOTOR:2:OPEN')} color="bg-indigo-900/50 text-indigo-200" disabled={!sbStatus.connected} />
+              <QuickCmdBtn label="ÇIKIŞ KAPAT" onClick={() => handleSend('MOTOR:2:CLOSE')} color="bg-indigo-900/50 text-indigo-300" disabled={!sbStatus.connected} />
+            </div>
+          </div>
+
+          {/* Valf Grubu */}
+          <div className="flex flex-col gap-2">
+            <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1 border-b border-slate-700/50 pb-1">Valf İşlemleri</span>
+            <div className="flex flex-wrap gap-2">
+              <QuickCmdBtn label="TÜMÜNÜ AÇ" onClick={() => handleSend('VALVE:ALL:ON')} color="bg-emerald-900/40 text-emerald-200" disabled={!sbStatus.connected} />
+              <QuickCmdBtn label="TÜMÜNÜ KAPAT" onClick={() => handleSend('FILL_START:ALL=0')} color="bg-slate-700 text-slate-400" disabled={!sbStatus.connected} />
+              <div className="w-px h-6 bg-slate-700 mx-1 hidden lg:block" />
+              <QuickCmdBtn label="Hız Testi (1s)" onClick={() => handleSend('FILL_START:ALL=1000')} color="bg-blue-900/40 text-blue-200" disabled={!sbStatus.connected} />
+            </div>
+          </div>
+        </div>
+
+        {/* Manual Command Form */}
+        <form onSubmit={(e) => { e.preventDefault(); handleSend(); }} className="flex gap-2">
+          <div className="relative flex-1">
+            <div className="absolute left-3 top-0 bottom-0 flex items-center text-emerald-600 font-black text-sm transition-all">&gt;_</div>
+            <input 
+              type="text" 
+              value={cmd} 
+              disabled={!sbStatus.connected}
+              onChange={e => setCmd(e.target.value.toUpperCase())}
+              placeholder={sbStatus.connected ? "MANUEL KOMUT GİRİNİZ (Örn: PINCFG:VALVE:D8)" : "İŞLEM YAPMAK İÇİN ÖNCE BAĞLANIN"}
+              className={`w-full h-11 bg-slate-950 border border-slate-700 rounded-lg px-10 text-emerald-400 font-mono text-sm outline-none transition-all ${!sbStatus.connected ? 'opacity-50 cursor-not-allowed bg-slate-900' : 'focus:border-emerald-600 focus:ring-1 focus:ring-emerald-900/50 shadow-inner'}`}
+            />
+          </div>
+          <button 
+            type="submit" 
+            disabled={!sbStatus.connected || !cmd.trim()}
+            className={`h-11 px-10 bg-emerald-600 text-white font-black text-[11px] uppercase tracking-widest rounded-lg transition-all shadow-lg ${!sbStatus.connected || !cmd.trim() ? 'opacity-40 cursor-not-allowed' : 'hover:bg-emerald-500 active:scale-95 shadow-emerald-900/20'}`}
+          >
+            KOMUTU GÖNDER
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function QuickCmdBtn({ label, onClick, color, disabled }: { label:string; onClick:()=>void; color:string; disabled?:boolean }) {
+  return (
+    <button 
+      disabled={disabled}
+      onClick={onClick} 
+      className={`px-4 h-8 rounded border border-transparent font-black text-[9px] tracking-tighter uppercase transition-all whitespace-nowrap ${disabled ? 'opacity-30 cursor-not-allowed' : 'hover:scale-105 active:scale-95'} ${color}`}
+    >
+      {label}
+    </button>
+  );
+}
+
 function ProcessSettingsView({ state, apiCall }: { state: SystemState; apiCall: any }) {
   const [activeTab, setActiveTab] = useState<'calib'|'cap'|'safe'|'cip'>('calib');
   const [customCip, setCustomCip] = useState(1);
@@ -587,7 +824,13 @@ function WashActionBtn({ label, sub, onClick, disabled, primary }: { label: stri
 function HardwareInventoryView({ state, apiCall }: { state: SystemState; apiCall: any }) {
   const [isAdding, setIsAdding] = useState(false);
   const [editId, setEditId] = useState<string|null>(null);
-  const [form, setForm] = useState<Partial<Device>>({ type: 'valve', target: 'nano', role: 'none', pin: '', name: '' });
+  const [form, setForm] = useState<Partial<Device>>({ 
+    type: 'valve', target: 'nano', role: 'none', pin: '', name: '',
+    manufacturer: '', model: '', serialNumber: '', description: '',
+    installDate: new Date().toISOString().split('T')[0],
+    lastMaintenance: '', specs: '', inverted: false, category: 'other'
+  });
+  const [formTab, setFormTab] = useState<'basic' | 'tech' | 'physical'>('basic');
 
   return (
     <div className="flex flex-col gap-6">
@@ -601,51 +844,125 @@ function HardwareInventoryView({ state, apiCall }: { state: SystemState; apiCall
             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide mt-0.5">{state.devices.length} DONANIM BAĞLI</span>
           </div>
         </div>
-        <button onClick={() => { setForm({ type: 'valve', target: 'nano', role: 'none', pin: '', name: '' }); setEditId(null); setIsAdding(true); }} disabled={state.systemRunning} className={`h-10 px-5 bg-blue-600 text-white font-bold text-[11px] uppercase tracking-wider shadow-md hover:bg-blue-700 active:scale-95 transition-all ${RADIUS} disabled:opacity-40 flex items-center gap-2`}>
+        <button 
+          onClick={() => { 
+            setForm({ 
+              type: 'valve', target: 'nano', role: 'none', pin: '', name: '',
+              manufacturer: '', model: '', serialNumber: '', description: '',
+              installDate: new Date().toISOString().split('T')[0],
+              lastMaintenance: '', specs: '', inverted: false, category: 'other'
+            }); 
+            setEditId(null); 
+            setIsAdding(true); 
+            setFormTab('basic');
+          }} 
+          disabled={state.systemRunning} 
+          className={`h-10 px-5 bg-blue-600 text-white font-bold text-[11px] uppercase tracking-wider shadow-md hover:bg-blue-700 active:scale-95 transition-all ${RADIUS} disabled:opacity-40 flex items-center gap-2`}
+        >
           <PlusCircle className="w-4 h-4" /> YENİ BİRİM
         </button>
       </div>
 
       {isAdding && (
-        <div className={`bg-white border-2 border-blue-400 p-6 shadow-xl relative ${RADIUS} animate-in fade-in slide-in-from-top-2 flex flex-col gap-5`}>
-          <div className="flex items-center gap-2 border-b border-slate-100 pb-3 mb-1">
-            <Settings className="w-4 h-4 text-blue-500" />
-            <span className="text-xs font-black text-slate-800 tracking-wider uppercase">Donanım Kayıt Formu</span>
+        <div className={`bg-white border-2 border-blue-400 shadow-2xl relative ${RADIUS} animate-in fade-in slide-in-from-top-2 flex flex-col overflow-hidden`}>
+          {/* Form Tabs */}
+          <div className="flex bg-slate-50 border-b border-slate-100">
+            <button onClick={() => setFormTab('basic')} className={`flex-1 h-12 text-[10px] font-black tracking-widest transition-all border-b-2 ${formTab === 'basic' ? 'border-blue-500 text-blue-600 bg-white' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>TEMEL BİLGİLER</button>
+            <button onClick={() => setFormTab('tech')}  className={`flex-1 h-12 text-[10px] font-black tracking-widest transition-all border-b-2 ${formTab === 'tech' ? 'border-blue-500 text-blue-600 bg-white' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>ENDÜSTRİYEL DETAYLAR</button>
+            <button onClick={() => setFormTab('physical')} className={`flex-1 h-12 text-[10px] font-black tracking-widest transition-all border-b-2 ${formTab === 'physical' ? 'border-blue-500 text-blue-600 bg-white' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>FİZİKSEL BAĞLANTI</button>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <FormGroup label="Birim Tipi">
-              <select className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 uppercase outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 ${RADIUS}`} value={form.type} onChange={e=>setForm({...form, type: e.target.value as any})}>
-                <option value="valve">SOLENOID VALF</option>
-                <option value="motor">PNÖMATİK AKTÜATÖR</option>
-                <option value="laser_sensor">LAZER SENSÖR</option>
-              </select>
-            </FormGroup>
-            <FormGroup label="Sürücü / Hedef">
-              <select className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 uppercase outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 ${RADIUS}`} value={form.target} onChange={e=>setForm({...form, target: e.target.value as any})}>
-                <option value="nano">PLC DRIVER (USB SERIAL)</option>
-                <option value="raspi">MASTER (NATIVE PINS)</option>
-              </select>
-            </FormGroup>
-            <FormGroup label="Bağlantı Pin'i">
-              <input type="text" className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 uppercase outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 ${RADIUS}`} value={form.pin} onChange={e=>setForm({...form, pin: e.target.value})} placeholder="Örnek: D8" />
-            </FormGroup>
-            <FormGroup label="Etiket Adı">
-              <input type="text" className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 ${RADIUS}`} value={form.name} onChange={e=>setForm({...form, name: e.target.value})} placeholder="Ör: Ana Valf" />
-            </FormGroup>
-            <FormGroup label="Mantıksal Rol">
-              <select className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 uppercase outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 ${RADIUS}`} value={form.role} onChange={e=>setForm({...form, role: e.target.value as any})}>
-                <option value="none">SADECE MANUEL TEST</option>
-                <option value="entry_laser">GİRİŞ LAZERİ</option>
-                <option value="exit_laser">ÇIKIŞ LAZERİ</option>
-                <option value="entry_lock">GİRİŞ BARİYERİ</option>
-                <option value="exit_lock">ÇIKIŞ BARİYERİ</option>
-                {Array.from({length:10}).map((_,i) => <option key={i} value={`valve_${i+1}`}>NOZUL {i+1} VALFİ</option>)}
-              </select>
-            </FormGroup>
+
+          <div className="p-6 flex flex-col gap-6">
+            {formTab === 'basic' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-300">
+                <FormGroup label="Birim Tipi">
+                  <select className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 uppercase outline-none focus:border-blue-500 ${RADIUS}`} value={form.type} onChange={e=>setForm({...form, type: e.target.value as any})}>
+                    <option value="valve">SOLENOID VALF</option>
+                    <option value="motor">PNÖMATİK AKTÜATÖR</option>
+                    <option value="laser_sensor">LAZER SENSÖR</option>
+                    <option value="generic">GENEL BİRİM</option>
+                  </select>
+                </FormGroup>
+                <FormGroup label="Kategori">
+                  <select className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 uppercase outline-none focus:border-blue-500 ${RADIUS}`} value={form.category} onChange={e=>setForm({...form, category: e.target.value as any})}>
+                    <option value="valve">VALFLER</option>
+                    <option value="sensor">SENSÖRLER</option>
+                    <option value="actuator">AKTÜATÖRLER</option>
+                    <option value="other">DİĞER</option>
+                  </select>
+                </FormGroup>
+                <FormGroup label="Etiket Adı (Tag)">
+                  <input type="text" className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 outline-none focus:border-blue-500 ${RADIUS}`} value={form.name} onChange={e=>setForm({...form, name: e.target.value})} placeholder="Ör: Ana Giriş Valfi" />
+                </FormGroup>
+                <div className="md:col-span-2 lg:col-span-3">
+                  <FormGroup label="Cihaz Açıklaması">
+                    <textarea className={`w-full p-3 border border-slate-200 bg-slate-50 text-[11px] font-bold text-slate-700 outline-none focus:border-blue-500 min-h-[80px] ${RADIUS}`} value={form.description} onChange={e=>setForm({...form, description: e.target.value})} placeholder="Donanımın görevi, lokasyonu veya özel notlar..." />
+                  </FormGroup>
+                </div>
+              </div>
+            )}
+
+            {formTab === 'tech' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-300">
+                <FormGroup label="Üretici / Marka">
+                  <input type="text" className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 outline-none focus:border-blue-500 ${RADIUS}`} value={form.manufacturer} onChange={e=>setForm({...form, manufacturer: e.target.value})} placeholder="Ör: Festo, SMC, Omron" />
+                </FormGroup>
+                <FormGroup label="Model Kodu">
+                  <input type="text" className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 outline-none focus:border-blue-500 ${RADIUS}`} value={form.model} onChange={e=>setForm({...form, model: e.target.value})} placeholder="Ör: VUVG-L10-B52" />
+                </FormGroup>
+                <FormGroup label="Seri Numarası">
+                  <input type="text" className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 outline-none focus:border-blue-500 ${RADIUS}`} value={form.serialNumber} onChange={e=>setForm({...form, serialNumber: e.target.value})} placeholder="S/N: 12345678" />
+                </FormGroup>
+                <FormGroup label="Montaj Tarihi">
+                  <input type="date" className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 outline-none focus:border-blue-500 ${RADIUS}`} value={form.installDate} onChange={e=>setForm({...form, installDate: e.target.value})} />
+                </FormGroup>
+                <FormGroup label="Son Bakım Tarihi">
+                  <input type="date" className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 outline-none focus:border-blue-500 ${RADIUS}`} value={form.lastMaintenance} onChange={e=>setForm({...form, lastMaintenance: e.target.value})} />
+                </FormGroup>
+                <FormGroup label="Donanım Özellikleri (Specs)">
+                  <input type="text" className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 outline-none focus:border-blue-500 ${RADIUS}`} value={form.specs} onChange={e=>setForm({...form, specs: e.target.value})} placeholder="Ör: 24VDC, IP67, 5/2 Way" />
+                </FormGroup>
+              </div>
+            )}
+
+            {formTab === 'physical' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-300">
+                <FormGroup label="Bağlı Olduğu Ünite">
+                  <select className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 uppercase outline-none focus:border-blue-500 ${RADIUS}`} value={form.target} onChange={e=>setForm({...form, target: e.target.value as any})}>
+                    <option value="nano">PLC DRIVER (USB SERIAL)</option>
+                    <option value="raspi">MASTER (RPI GPIO)</option>
+                  </select>
+                </FormGroup>
+                <FormGroup label="Fiziksel Pin / Adres">
+                  <input type="text" className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 uppercase outline-none focus:border-blue-500 ${RADIUS}`} value={form.pin} onChange={e=>setForm({...form, pin: e.target.value})} placeholder="D8 veya GPIO17" />
+                </FormGroup>
+                <FormGroup label="Mantıksal Rol (Sistem Ataması)">
+                  <select className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 uppercase outline-none focus:border-blue-500 ${RADIUS}`} value={form.role} onChange={e=>setForm({...form, role: e.target.value as any})}>
+                    <option value="none">Sistem Dışı / Manuel</option>
+                    <option value="entry_laser">GİRİŞ SENSÖRÜ</option>
+                    <option value="exit_laser">ÇIKIŞ SENSÖRÜ</option>
+                    <option value="entry_lock">GİRİŞ KİLİDİ</option>
+                    <option value="exit_lock">ÇIKIŞ KİLİDİ</option>
+                    {Array.from({length:10}).map((_,i) => <option key={i} value={`valve_${i+1}`}>NOZUL {i+1} VALFİ</option>)}
+                  </select>
+                </FormGroup>
+                <div className="flex items-center gap-3 pt-4 px-2">
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" className="sr-only peer" checked={form.inverted} onChange={e => setForm({...form, inverted: e.target.checked})} />
+                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-blue-600 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+                  </label>
+                  <span className="text-[10px] font-black text-slate-600 uppercase tracking-wider">Ters Mantık (Active Low)</span>
+                </div>
+              </div>
+            )}
           </div>
-          <div className="flex justify-end gap-3 pt-2 mt-2 border-t border-slate-100">
-            <button onClick={()=>{ setIsAdding(false); setEditId(null); }} className={`px-6 h-10 text-[11px] font-black text-slate-500 hover:bg-slate-100 transition-colors ${RADIUS}`}>İPTAL ET</button>
-            <button onClick={() => { apiCall('/api/devices', { device: { ...form, id: editId || Math.random().toString(36).substr(2, 9) } }); setIsAdding(false); setEditId(null); }} className={`px-8 h-10 bg-blue-600 text-white text-[11px] font-black uppercase shadow-md hover:bg-blue-700 transition-colors ${RADIUS}`}>{editId ? 'GÜNCELLE' : 'KAYDET'}</button>
+
+          <div className="flex justify-between items-center p-6 bg-slate-50 border-t border-slate-100">
+            <span className="text-[9px] font-bold text-slate-400 uppercase">* Tüm endüstriyel veriler SQLite veritabanında saklanır.</span>
+            <div className="flex gap-3">
+              <button onClick={()=>{ setIsAdding(false); setEditId(null); }} className={`px-6 h-11 text-[11px] font-black text-slate-500 hover:bg-slate-200 transition-colors ${RADIUS}`}>İPTAL</button>
+              <button onClick={() => { apiCall('/api/devices', { device: { ...form, id: editId || Math.random().toString(36).substr(2, 9) } }); setIsAdding(false); setEditId(null); }} className={`px-10 h-11 bg-blue-600 text-white text-[11px] font-black uppercase shadow-lg shadow-blue-200 hover:bg-blue-700 transition-all active:scale-95 ${RADIUS}`}>{editId ? 'GÜNCELLE' : 'ENVANTERE EKLE'}</button>
+            </div>
           </div>
         </div>
       )}
@@ -657,16 +974,20 @@ function HardwareInventoryView({ state, apiCall }: { state: SystemState; apiCall
               <div className={`w-10 h-10 shrink-0 flex items-center justify-center border transition-all ${RADIUS} ${dev.active ? 'bg-blue-50 border-blue-200 text-blue-600' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
                 {dev.type === 'valve' ? <Droplet className="w-4 h-4" /> : <Microchip className="w-4 h-4" />}
               </div>
-              <div className="flex flex-col min-w-0 truncate">
-                <div className="flex items-center gap-2 mb-0.5">
+              <div className="flex flex-col min-w-0 flex-1">
+                <div className="flex items-center gap-3 mb-1">
                   <span className="text-[13px] font-black text-slate-800 uppercase truncate">{dev.name}</span>
-                  {dev.active && <span className="w-1.5 h-1.5 bg-green-500 rounded-full shrink-0" />}
+                  {dev.manufacturer && <span className="px-2 py-0.5 bg-slate-100 text-slate-500 text-[9px] font-black rounded-full uppercase">{dev.manufacturer}</span>}
+                  {dev.model && <span className="px-2 py-0.5 bg-blue-50 text-blue-500 text-[9px] font-black rounded-full uppercase">{dev.model}</span>}
+                  {dev.active && <span className="w-2 h-2 bg-green-500 rounded-full shrink-0 shadow-[0_0_8px_rgba(34,197,94,0.5)] animate-pulse" />}
                 </div>
-                <div className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-wider h-3">
-                  <span className="text-blue-500">{dev.role.replace('_', ' ')}</span>
-                  <span className="w-1 h-1 bg-slate-200 rounded-full" />
-                  <span className="text-slate-400">{dev.target === 'nano' ? 'PLC DRIVER' : dev.target} &rarr; {dev.pin}</span>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[9px] font-bold uppercase tracking-wider">
+                  <span className="text-blue-500 bg-blue-50/50 px-1.5 rounded">{dev.role.replace('_', ' ')}</span>
+                  <span className="text-slate-400">{dev.target === 'nano' ? 'PLC DRIVER' : 'MASTER'} &rarr; {dev.pin}</span>
+                  {dev.installDate && <span className="text-slate-300">İNS: {dev.installDate}</span>}
+                  {dev.inverted && <span className="text-rose-400 font-black italic">[INVERTED]</span>}
                 </div>
+                {dev.description && <p className="text-[9px] text-slate-400 mt-1.5 italic line-clamp-1">"{dev.description}"</p>}
               </div>
             </div>
             <div className="flex gap-2 shrink-0 ml-4">
@@ -714,6 +1035,36 @@ function EmergencyShutter({ onReset }: { onReset: () => void }) {
           </div>
         </button>
       </div>
+    </div>
+  );
+}
+
+// ─── NOTIFICATION TOAST ───────────────────────────
+
+function NotificationToast({ notification }: { notification: SystemNotification; key?: string }) {
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setVisible(false), 5000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  if (!visible) return null;
+
+  const bg = notification.type === 'success' ? 'bg-emerald-600' : 'bg-blue-600';
+
+  return (
+    <div className={`w-80 p-4 ${bg} text-white shadow-2xl ${RADIUS} pointer-events-auto flex gap-4 animate-in slide-in-from-right fade-in duration-300 relative border border-white/20`}>
+      <div className="shrink-0 flex items-center justify-center">
+        <Bell className="w-5 h-5 text-white/80" />
+      </div>
+      <div className="flex flex-col gap-1 pr-4">
+        <span className="text-[10px] font-black tracking-widest uppercase opacity-80">{notification.title}</span>
+        <p className="text-[11px] font-bold leading-tight">{notification.message}</p>
+      </div>
+      <button onClick={() => setVisible(false)} className="absolute top-2 right-2 text-white/50 hover:text-white transition-colors">
+        <Trash2 className="w-3.5 h-3.5" />
+      </button>
     </div>
   );
 }

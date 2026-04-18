@@ -61,9 +61,39 @@ export async function initDb(): Promise<void> {
       role            TEXT NOT NULL,
       target          TEXT NOT NULL,
       pin             TEXT NOT NULL,
-      fillDurationMs  INTEGER
+      fillDurationMs  INTEGER,
+      manufacturer    TEXT,
+      model           TEXT,
+      serialNumber    TEXT,
+      description     TEXT,
+      installDate     TEXT,
+      lastMaintenance TEXT,
+      specs           TEXT,
+      inverted        INTEGER DEFAULT 0,
+      category        TEXT
     );
   `);
+
+  // Mevcut veritabanları için sütun ekleme (Migration)
+  const columnsToAdd = [
+    { name: 'manufacturer',    type: 'TEXT' },
+    { name: 'model',           type: 'TEXT' },
+    { name: 'serialNumber',    type: 'TEXT' },
+    { name: 'description',     type: 'TEXT' },
+    { name: 'installDate',     type: 'TEXT' },
+    { name: 'lastMaintenance', type: 'TEXT' },
+    { name: 'specs',           type: 'TEXT' },
+    { name: 'inverted',        type: 'INTEGER DEFAULT 0' },
+    { name: 'category',        type: 'TEXT' }
+  ];
+
+  for (const col of columnsToAdd) {
+    try {
+      db.run(`ALTER TABLE devices ADD COLUMN ${col.name} ${col.type}`);
+    } catch {
+      // Sütun zaten varsa hata verir, görmezden gel
+    }
+  }
 
   persist();
   console.log(`[DB] Veritabanı hazır: ${DB_PATH}`);
@@ -168,11 +198,16 @@ export function getDevices(): Device[] {
 export function saveDevice(device: Device): void {
   db.run(`
     INSERT OR REPLACE INTO devices 
-    (id, name, type, role, target, pin, fillDurationMs)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    (id, name, type, role, target, pin, fillDurationMs, 
+     manufacturer, model, serialNumber, description, installDate, 
+     lastMaintenance, specs, inverted, category)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     device.id, device.name, device.type, device.role,
-    device.target, device.pin, device.fillDurationMs || null
+    device.target, device.pin, device.fillDurationMs || null,
+    device.manufacturer || null, device.model || null, device.serialNumber || null,
+    device.description || null, device.installDate || null, device.lastMaintenance || null,
+    device.specs || null, device.inverted ? 1 : 0, device.category || null
   ]);
   persist();
 }

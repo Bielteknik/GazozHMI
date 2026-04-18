@@ -26,6 +26,34 @@ export interface SystemState {
   };
   
   devices: Device[]; // 100% dinamik donanımlar
+  rawLogs: CommLog[]; // Son haberleşme kayıtları (UI buffer)
+  notifications: SystemNotification[]; // Anlık bildirimler
+}
+
+export interface SystemNotification {
+  id: string;
+  type: 'info' | 'success' | 'warning' | 'error';
+  title: string;
+  message: string;
+  timestamp: string;
+  persistent?: boolean;
+}
+
+export interface PortMetadata {
+  path: string;
+  manufacturer?: string;
+  vendorId?: string;
+  productId?: string;
+  isLikelyPLC: boolean;
+}
+
+export interface CommLog {
+  id: string;
+  timestamp: string;
+  direction: 'IN' | 'OUT' | 'INTERNAL';
+  source: 'RPI' | 'NANO' | 'SENSOR' | 'SYSTEM' | 'SANDBOX';
+  msg: string;
+  level?: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
 }
 
 export type ConnectionTarget = 'raspi' | 'nano';
@@ -47,6 +75,17 @@ export interface Device {
   target: ConnectionTarget;// Hangi karta bağlı?
   pin: string;             // Fiziksel bağlandı pini (Örn: GPIO4 veya D8)
   fillDurationMs?: number; // Sadece valfler için (ms cinsinden dolum süresi)
+  
+  // -- Envanter ve Teknik Detaylar --
+  manufacturer?: string;    // Üretici / Marka
+  model?: string;           // Model Kodu
+  serialNumber?: string;    // Seri Numarası
+  description?: string;     // Genel Açıklama
+  installDate?: string;      // Montaj Tarihi
+  lastMaintenance?: string; // Son Bakım Tarihi
+  specs?: string;           // Teknik Özellikler (24VDC, IP67 vb)
+  inverted?: boolean;       // Ters Mantık (Active Low)
+  category?: 'sensor' | 'actuator' | 'valve' | 'other';
   
   // -- Gerçek zamanlı (Volatile) State Durumları --
   active: boolean;         // Şu an tetiklenmiş (Açık) durumda mı?
