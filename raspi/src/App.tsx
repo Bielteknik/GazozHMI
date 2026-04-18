@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   Activity, Settings, AlertTriangle, Droplet, Cpu, ScanLine,
   Play, Square, Lock, Unlock, Timer, Terminal, History, Bell,
@@ -131,30 +131,16 @@ function SystemToggle({ running, disabled, onClick }: { running: boolean; disabl
 // ─── DASHBOARD VIEW ──────────────────────────────────
 
 function DashboardView({ state }: { state: SystemState }) {
-  const [subTab, setSubTab] = useState<'visual' | 'map'>('visual');
-  const inSensor = state.devices.find(d => d.role === 'entry_laser');
-  const outSensor = state.devices.find(d => d.role === 'exit_laser');
+  const [subTab, setSubTab] = useState<'console' | 'map'>('console');
 
   return (
     <div className="h-full flex flex-col">
-      {/* ─── TOP ANALYTICS ─── */}
-      <div className="grid grid-cols-4 gap-3 p-4 bg-white border-b border-slate-100">
-        <AnalyticCard label="Hattın Mevcut Fazı" value={pStateMap[state.process.state]} icon={<Layers className="text-blue-500" />} />
-        <AnalyticCard label="Bölgedeki Ürün" value={`${state.process.bottlesInArea} / ${state.process.targetBottles}`} icon={<Droplet className="text-cyan-500" />} />
-        <AnalyticCard label="Toplam Giriş" value={inSensor?.count?.toString() || "0"} icon={<Activity className="text-emerald-500" />} />
-        <AnalyticCard label="Toplam Çıkış" value={outSensor?.count?.toString() || "0"} icon={<RefreshCw className="text-orange-500" />} />
+      <div className="flex bg-white border-b border-slate-100">
+        <SubTab active={subTab === 'console'} onClick={() => setSubTab('console')} label="CANLI KONSOL" />
+        <SubTab active={subTab === 'map'}     onClick={() => setSubTab('map')}     label="DONANIM ENVANTERİ" />
       </div>
-
-      {/* ─── MAIN DISPLAY ─── */}
-      <div className="flex-1 flex flex-col min-h-0">
-        <div className="flex bg-white border-b border-slate-50">
-          <SubTab active={subTab === 'visual'} onClick={() => setSubTab('visual')} label="CANLI TEKNİK HAT DURUMU" />
-          <SubTab active={subTab === 'map'}    onClick={() => setSubTab('map')}    label="DONANIM ENVANTERİ" />
-        </div>
-        
-        <div className="flex-1 relative bg-slate-50/50">
-          {subTab === 'visual' ? <PremiumMimicDiagram state={state} /> : <HardwareList state={state} />}
-        </div>
+      <div className="flex-1 relative" style={{ minHeight: 0 }}>
+        {subTab === 'console' ? <ConsoleView state={state} /> : <HardwareList state={state} />}
       </div>
     </div>
   );
@@ -185,122 +171,216 @@ function SubTab({ active, onClick, label }: { active: boolean; onClick: () => vo
   );
 }
 
-// ─── PREMIUM MIMIC DIAGRAM (The Masterpiece) ───
+// ─── CONSOLE VIEW ───────────────────────────────────────────────────────────
 
-function PremiumMimicDiagram({ state }: { state: SystemState }) {
-  const valves = state.devices.filter(d => d.type === 'valve').sort((a,b) => a.role.localeCompare(b.role));
+type LogLevel = 'SYS' | 'INFO' | 'OK' | 'WARN' | 'ERROR';
+interface LogEntry { id: number; ts: string; level: LogLevel; msg: string; }
+let _logId = 0;
+function mkLog(level: LogLevel, msg: string): LogEntry {
+  const d = new Date();
+  const ts = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+  return { id: _logId++, ts, level, msg };
+}
+
+const LEVEL_COLOR: Record<LogLevel, string> = {
+  SYS: 'text-slate-400', INFO: 'text-blue-500', OK: 'text-emerald-500', WARN: 'text-amber-500', ERROR: 'text-rose-500'
+};
+const LOG_TEXT: Record<LogLevel, string> = {
+  SYS: 'text-slate-500', INFO: 'text-slate-700', OK: 'text-slate-700 font-bold', WARN: 'text-amber-700 font-bold', ERROR: 'text-rose-600 font-black'
+};
+
+function ConsoleView({ state }: { state: SystemState }) {
+  const [logs, setLogs] = useState<LogEntry[]>(() => [mkLog('SYS', 'GazozHMI konsol başlatıldı.')]);
+  const prevRef   = useRef<SystemState | null>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const prev = prevRef.current;
+    if (!prev) { prevRef.current = state; return; }
+    const entries: LogEntry[] = [];
+
+    if (prev.systemRunning !== state.systemRunning)
+      entries.push(mkLog(state.systemRunning ? 'OK' : 'WARN',
+        state.systemRunning ? 'Üretim hattı BAŞLATILDI.' : 'Üretim hattı DURDURULDU.'));
+
+    if (!prev.emergencyStop && state.emergencyStop)
+      entries.push(mkLog('ERROR', '!!! ACİL STOP AKTİF — TÜM ÇIKIŞLAR KESİLDİ !!!'));
+    if (prev.emergencyStop && !state.emergencyStop)
+      entries.push(mkLog('OK', 'Acil stop sıfırlandı. Sistem güvenli.'));
+
+    if (prev.process.state !== state.process.state)
+      entries.push(mkLog('INFO', `Proses fazı: ${prev.process.state} → ${state.process.state}`));
+
+    if (prev.process.bottlesInArea !== state.process.bottlesInArea) {
+      const d = state.process.bottlesInArea - prev.process.bottlesInArea;
+      entries.push(mkLog('INFO',
+        d > 0
+          ? `Ürün algılandı. Hat: ${state.process.bottlesInArea}/${state.process.targetBottles}`
+          : `Ürün çıktı.   Hat: ${state.process.bottlesInArea}/${state.process.targetBottles}`
+      ));
+    }
+
+    state.devices.forEach(dev => {
+      const p = prev.devices.find(d => d.id === dev.id);
+      if (p && p.active !== dev.active)
+        entries.push(mkLog(
+          dev.type === 'laser_sensor' ? (dev.active ? 'WARN' : 'OK') : (dev.active ? 'OK' : 'INFO'),
+          `[${dev.target.toUpperCase()}:${dev.pin}] ${dev.name} → ${dev.active ? 'AKTİF' : 'PASİF'}`
+        ));
+    });
+
+    if (entries.length > 0)
+      setLogs(prev => [...prev.slice(-300), ...entries]);
+
+    prevRef.current = state;
+  }, [state]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logs]);
+
+  const valves    = state.devices.filter(d => d.type === 'valve').sort((a,b) => a.role.localeCompare(b.role));
   const entryLock = state.devices.find(d => d.role === 'entry_lock');
-  const exitLock = state.devices.find(d => d.role === 'exit_lock');
-  const inSensor = state.devices.find(d => d.role === 'entry_laser');
+  const exitLock  = state.devices.find(d => d.role === 'exit_lock');
+  const inSensor  = state.devices.find(d => d.role === 'entry_laser');
   const outSensor = state.devices.find(d => d.role === 'exit_laser');
 
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center p-4 overflow-hidden">
+    <div className="absolute inset-0 bg-slate-50 font-mono flex flex-col overflow-hidden text-slate-800 shadow-inner">
       
-      <div className="w-full flex flex-row h-[650px]">
-        
-        {/* LEFT PANEL: TANK AREA - 25% (Aligned to the far left with 30px gap) */}
-        <div className="w-1/4 h-full relative flex items-center justify-start pl-[30px]">
-           <div className="flex flex-col items-center scale-90 xxl:scale-100">
-              <div className="w-24 h-8 bg-slate-300 rounded-full border border-slate-400 mb-[-1px] z-10 shadow-sm" />
-              <div className="w-72 h-[450px] bg-gradient-to-r from-slate-400 via-slate-100 to-slate-400 border-x-4 border-slate-300 rounded-t-[50px] relative shadow-2xl overflow-hidden">
-                 <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.8),transparent_50%)]" />
-                 <div className="absolute bottom-12 right-8 w-6 h-[300px] bg-slate-800/20 rounded-full p-[4px] border border-white/10">
-                    <div className="w-full h-[65%] bg-gradient-to-t from-blue-500 to-blue-400 rounded-full shadow-[0_0_20px_rgba(59,130,246,0.6)] animate-pulse" />
-                 </div>
-              </div>
-              <div className="flex gap-48 mt-[-1px]">
-                 <div className="w-8 h-24 bg-gradient-to-b from-slate-400 to-slate-600 rounded-b-2xl shadow-md" />
-                 <div className="w-8 h-24 bg-gradient-to-b from-slate-400 to-slate-600 rounded-b-2xl shadow-md" />
-              </div>
-              <div className="mt-8 px-10 py-4 bg-slate-900 text-white rounded-full text-xs font-black tracking-[0.3em] shadow-2xl border-2 border-slate-700">ŞERBET TANKI</div>
-           </div>
+      {/* ── TOP STATUS BAR ── */}
+      <div className="px-6 py-2.5 border-b border-slate-200 bg-white flex gap-6 items-center shrink-0 flex-wrap shadow-sm relative z-10">
+        <div className="flex gap-2.5 items-center">
+          <span className="text-[10px] text-slate-500 tracking-widest font-bold">PROSES</span>
+          <span className={`text-[11px] font-black border rounded px-2.5 py-0.5 tracking-wider uppercase ${state.process.state === 'FILLING' ? 'text-emerald-600 border-emerald-300 bg-emerald-50' : state.process.state === 'WAITING_EXIT' ? 'text-blue-600 border-blue-300 bg-blue-50' : state.process.state === 'WASHING' ? 'text-purple-600 border-purple-300 bg-purple-50' : 'text-slate-600 border-slate-300 bg-slate-100'}`}>
+            {state.process.state}
+          </span>
         </div>
+        <div className="w-px h-5 bg-slate-200" />
+        <KVPair k="HATTA" v={`${state.process.bottlesInArea} / ${state.process.targetBottles}`} textColor="text-slate-800" />
+        <div className="w-px h-5 bg-slate-200" />
+        <KVPair k="GİRİŞ SAYACI" v={String(inSensor?.count ?? 0)} textColor="text-emerald-600" />
+        <div className="w-px h-5 bg-slate-200" />
+        <KVPair k="ÇIKIŞ SAYACI" v={String(outSensor?.count ?? 0)} textColor="text-blue-600" />
+        
+        <div className="ml-auto flex gap-4">
+          {state.systemRunning && <span className="text-[10px] font-black tracking-widest text-emerald-600 flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"/>ÇALIŞIYOR</span>}
+          {state.emergencyStop && <span className="text-[10px] font-black tracking-widest text-rose-600 flex items-center gap-1.5 animate-pulse"><AlertTriangle className="w-3.5 h-3.5"/>ACİL STOP</span>}
+          {!state.systemRunning && !state.emergencyStop && <span className="text-[10px] font-black tracking-widest text-slate-500 flex items-center gap-1.5"><div className="w-2 h-2 rounded-full border-2 border-slate-500"/>DURAKLADI</span>}
+        </div>
+      </div>
 
-        {/* RIGHT PANEL: PRODUCTION MACHINE - 75% */}
-        <div className="w-3/4 h-full relative flex items-center justify-center p-8">
+      {/* ── BODY ── */}
+      <div className="flex-1 flex overflow-hidden min-h-0 relative">
+        
+        {/* ── LEFT: DEVICE STATUS ── */}
+        <div className="w-[38%] md:w-[35%] border-r border-slate-200 flex flex-col overflow-hidden shrink-0 bg-white relative z-10 shadow-[4px_0_24px_-12px_rgba(0,0,0,0.05)]">
+          <SectionHeader text={`CİHAZ LİSTESİ (${state.devices.length})`} />
           
-          {/* Main Production Line Core (Vertical Stack) */}
-          <div className="flex flex-col items-center gap-6 w-full max-w-5xl relative translate-y-[-20px]">
+          <div className="flex-1 overflow-y-auto px-4 py-2 flex flex-col gap-1.5">
+            {state.devices.length === 0 ? (
+              <div className="p-4 text-[11px] font-bold text-slate-400">Cihaz bulunamadı.</div>
+            ) : state.devices.map(dev => {
+              const typeColor = dev.type === 'valve' ? 'text-blue-500' : dev.type === 'laser_sensor' ? 'text-amber-500' : 'text-purple-500';
+              return (
+                <div key={dev.id} className={`px-3 py-2 flex items-center gap-3 border rounded-lg transition-colors ${dev.active ? 'bg-emerald-50 border-emerald-200' : 'bg-transparent border-slate-100'}`}>
+                  <div className={`w-2 h-2 rounded-full ${dev.active ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'border border-slate-300'}`} />
+                  <span className={`text-[10px] font-black tracking-wider w-4 ${typeColor}`}>{dev.type === 'valve' ? 'V' : dev.type === 'laser_sensor' ? 'L' : 'M'}</span>
+                  <span className="text-[11px] font-bold text-slate-700 flex-1 truncate">{dev.name}</span>
+                  <span className="text-[9px] font-bold text-slate-400 shrink-0 uppercase">{dev.target}/{dev.pin}</span>
+                  <span className={`text-[10px] font-black w-8 text-right shrink-0 ${dev.active ? 'text-emerald-700' : 'text-slate-400'}`}>{dev.active ? 'ON' : 'OFF'}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* ── CRITICAL PANEL (Solenoid Valfler & Sensörler) ── */}
+          <div className="border-t border-slate-200 bg-slate-50 p-5 shrink-0 flex flex-col gap-4">
+            <div className="text-[10px] font-black text-slate-500 tracking-widest uppercase mb-1 flex items-center gap-2">
+              <Activity className="w-3.5 h-3.5 text-slate-400" />
+              <span>SİSTEM BİLEŞENLERİ</span>
+            </div>
             
-            {/* 1. NOZZLE UNIT (Aligned perfectly above bottles) */}
-            <div className="w-full flex justify-around items-end gap-1 px-10 relative z-10 h-24">
-               {Array.from({length: state.process.targetBottles}).map((_, i) => (
-                 <div key={i} className="flex flex-col items-center">
-                    <div className="text-[7px] font-black text-slate-300 mb-1">UNIT-{i+1}</div>
-                    <div className={`w-10 h-16 border-2 transition-all duration-300 rounded-md shadow-md relative ${valves[i]?.active ? 'bg-blue-500 border-blue-600 shadow-blue-100 scale-105' : 'bg-white border-slate-100 opacity-60'}`}>
-                       {valves[i]?.active && (
-                         <div className="absolute top-full left-1/2 -translate-x-1/2 w-4 h-[100px] bg-gradient-to-b from-blue-400/60 to-transparent animate-pulse rounded-full z-10" />
-                       )}
-                    </div>
-                 </div>
-               ))}
+            {/* Lazerler ve Kilitler */}
+            <div className="grid grid-cols-4 gap-2">
+              {([
+                { k:'KİLİT GİRİŞ',  d:entryLock, errOnActive:false },
+                { k:'KİLİT ÇIKIŞ',  d:exitLock,  errOnActive:false },
+                { k:'LAZER GİRİŞ',  d:inSensor,  errOnActive:true },
+                { k:'LAZER ÇIKIŞ',  d:outSensor, errOnActive:true },
+              ] as { k:string; d:Device|undefined; errOnActive:boolean }[]).map(({k,d,errOnActive}) => {
+                const on = !!d?.active;
+                const activeColor = errOnActive ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-emerald-300 bg-emerald-50 text-emerald-700';
+                return (
+                  <div key={k} className={`border rounded-md px-2 py-2 flex flex-col items-center justify-center transition-colors ${on ? activeColor : 'border-slate-200 bg-white text-slate-500'}`}>
+                    <span className="text-[8px] font-black tracking-wider uppercase mb-1 text-center leading-tight">{k}</span>
+                    <span className={`text-[11px] font-black ${on ? '' : 'text-slate-300'}`}>{on ? 'ON' : 'OFF'}</span>
+                  </div>
+                );
+              })}
             </div>
-
-            {/* 2. BOTTLES LAYER */}
-            <div className="w-full flex justify-around items-end gap-1 px-10 h-40 relative z-20">
-               {Array.from({length: state.process.targetBottles}).map((_, i) => (
-                 <div key={i} className={`w-18 h-36 border-2 transition-all duration-500 p-1 relative shadow-lg rounded-md ${i < state.process.bottlesInArea 
-                   ? 'bg-white border-slate-300 scale-100 opacity-100' 
-                   : 'bg-white/40 border-slate-200 scale-95 opacity-50'}`}>
-                    {/* Fluid Fill Visual */}
-                    {i < state.process.bottlesInArea && (
-                      <div className={`absolute bottom-1 left-1 right-1 bg-gradient-to-t from-emerald-500 to-emerald-400 rounded-sm transition-all duration-1000 ${RADIUS}`} 
-                           style={{ height: state.process.state === 'FILLING' ? '85%' : '15%' }} />
-                    )}
-                    <div className="absolute inset-0 border border-white/20 pointer-events-none rounded-md" />
-                 </div>
-               ))}
+            
+            {/* Solenoid Valfler */}
+            <div className="flex flex-col gap-2 mt-1">
+              <div className="flex justify-between items-center px-1">
+                <span className="text-[9px] font-black text-slate-500 tracking-widest uppercase">SOLENOİD VALFLER ({valves.length})</span>
+                <span className="text-[10px] font-bold text-slate-400">{valves.filter(v=>v.active).length} Aktif</span>
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                {valves.map((v, i) => (
+                  <div key={v.id} className={`w-8 h-8 rounded border flex flex-col items-center justify-center transition-all ${v.active ? 'bg-blue-500 border-blue-600 text-white shadow-md scale-105' : 'bg-white border-slate-200 text-slate-400'}`}>
+                    <span className="text-[11px] font-black leading-none">{i+1}</span>
+                  </div>
+                ))}
+                {valves.length === 0 && <span className="text-[10px] text-slate-400 italic font-bold">Valf tanımlanmamış.</span>}
+              </div>
             </div>
-
-            {/* 3. THE CONVEYOR & PILLARS UNIT (The Anchor) */}
-            <div className="w-full relative px-2">
-               {/* The Belt */}
-               <div className="w-full h-12 bg-gradient-to-r from-slate-700 via-slate-800 to-slate-700 border-y-2 border-slate-900 relative z-30 shadow-2xl flex items-center justify-center rounded-sm">
-                  <div className="h-0.5 w-full bg-white/5 absolute top-1/2 -translate-y-1/2" />
-               </div>
-
-               {/* Entry Unit (Left Support) */}
-               <div className="absolute left-[-24px] top-1/2 -translate-y-1/2 flex flex-col items-center z-40">
-                  <div className="flex items-center gap-2">
-                     <div className={`w-16 h-48 bg-slate-900 border-2 border-slate-950 flex flex-col items-center justify-center text-white/40 rounded-lg shadow-2xl`}>
-                       <span className="text-[10px] font-black">L-1</span>
-                     </div>
-                     <div className={`w-10 h-40 border-4 transition-all duration-500 shadow-2xl rounded-lg ${entryLock?.active ? 'bg-rose-500 border-rose-700 shadow-rose-200' : 'bg-emerald-500 border-emerald-700 shadow-emerald-200'}`} />
-                  </div>
-                  {/* Label below the unit */}
-                  <div className={`px-4 py-2 bg-white border border-slate-200 shadow-lg rounded-xl flex items-center gap-3 mt-8 whitespace-nowrap`}>
-                     <div className={`w-4 h-4 rounded-full border-2 ${inSensor?.active ? 'bg-rose-500 shadow-[0_0_8px_rose]' : 'bg-slate-200'}`} />
-                     <span className="text-[9px] font-black text-slate-800 uppercase tracking-tight">GİRİŞ ÜNİTESİ</span>
-                  </div>
-               </div>
-
-               {/* Exit Unit (Right Support) */}
-               <div className="absolute right-[-24px] top-1/2 -translate-y-1/2 flex flex-col items-center z-40">
-                  <div className="flex items-center gap-2">
-                     <div className={`w-10 h-40 border-4 transition-all duration-500 shadow-2xl rounded-lg ${exitLock?.active ? 'bg-rose-500 border-rose-700 shadow-rose-200' : 'bg-emerald-500 border-emerald-700 shadow-emerald-200'}`} />
-                     <div className={`w-16 h-48 bg-slate-900 border-2 border-slate-950 flex flex-col items-center justify-center text-white/40 rounded-lg shadow-2xl`}>
-                       <span className="text-[10px] font-black">L-2</span>
-                     </div>
-                  </div>
-                  {/* Label below the unit */}
-                  <div className={`px-4 py-2 bg-white border border-slate-200 shadow-lg rounded-xl flex items-center gap-3 mt-8 whitespace-nowrap`}>
-                     <span className="text-[9px] font-black text-slate-800 uppercase tracking-tight">ÇIKIŞ ÜNİTESİ</span>
-                     <div className={`w-4 h-4 rounded-full border-2 ${outSensor?.active ? 'bg-rose-500 shadow-[0_0_8px_rose]' : 'bg-slate-200'}`} />
-                  </div>
-               </div>
-            </div>
-
+            
           </div>
         </div>
 
-      </div>
+        {/* ── RIGHT: LIVE LOG ── */}
+        <div className="flex-1 flex flex-col overflow-hidden bg-slate-50 relative">
+          <SectionHeader text="CANLI OLAY KAYDI" />
+          <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-1">
+            {logs.map(log => (
+              <div key={log.id} className="flex gap-4 text-[11px] leading-relaxed group hover:bg-white/60 px-2 py-1 rounded">
+                <span className="text-slate-400 font-bold shrink-0">{log.ts}</span>
+                <span className={`${LEVEL_COLOR[log.level]} font-black w-10 shrink-0`}>{log.level}</span>
+                <span className={`${LOG_TEXT[log.level]} flex-1`}>{log.msg}</span>
+              </div>
+            ))}
+            <div ref={bottomRef} className="h-4 shrink-0" />
+          </div>
+          
+          {/* Overlay gradient for aesthetics */}
+          <div className="absolute bottom-0 left-0 right-0 h-4 bg-gradient-to-t from-slate-50 to-transparent pointer-events-none" />
+        </div>
 
+      </div>
     </div>
   );
 }
 
-// ─── HARDWARE LIST ──────────────────────────────────
+// ── Console helper components ──
+function KVPair({ k, v, textColor }: { k:string; v:string; textColor:string }) {
+  return (
+    <div className="flex gap-2 items-center">
+      <span className="text-[10px] text-slate-500 tracking-widest font-bold">{k}</span>
+      <span className={`text-[13px] font-black ${textColor}`}>{v}</span>
+    </div>
+  );
+}
+
+function SectionHeader({ text }: { text:string }) {
+  return (
+    <div className="px-5 py-2.5 border-b border-slate-200 bg-slate-100/50 shrink-0">
+      <span className="text-[10px] font-black text-slate-500 tracking-[0.2em] uppercase">{text}</span>
+    </div>
+  );
+}
+
+// ─── HARDWARE LIST ────────────────────────────────────
 
 function HardwareList({ state }: { state: SystemState }) {
   return (
@@ -333,14 +413,16 @@ function SettingsView({ state, apiCall }: { state: SystemState; apiCall: any }) 
   const [activeSub, setActiveSub] = useState<'inventory' | 'process'>('inventory');
 
   return (
-    <div className="h-full flex flex-col">
-      <div className="flex px-10 border-b border-slate-100 shrink-0 bg-white mt-2">
-        <MainTabButton active={activeSub === 'inventory'} onClick={() => setActiveSub('inventory')} label="DONANIM ENVANTER PLANI" />
-        <MainTabButton active={activeSub === 'process'}   onClick={() => setActiveSub('process')}   label="ÜRETİM PARAMETRE AYARLARI" />
+    <div className="h-full flex flex-col bg-slate-50">
+      <div className="flex px-8 border-b border-slate-200 shrink-0 bg-white shadow-[0_4px_20px_-10px_rgba(0,0,0,0.05)] relative z-10 w-full pt-2">
+        <MainTabButton active={activeSub === 'inventory'} onClick={() => setActiveSub('inventory')} label="DONANIM ENVANTERİ" />
+        <MainTabButton active={activeSub === 'process'}   onClick={() => setActiveSub('process')}   label="ÜRETİM PARAMETRELERİ" />
       </div>
 
-      <div className="flex-1 overflow-y-auto p-10 bg-white">
-        {activeSub === 'inventory' ? <HardwareInventoryView state={state} apiCall={apiCall} /> : <ProcessSettingsView state={state} apiCall={apiCall} />}
+      <div className="flex-1 overflow-y-auto p-6 md:p-8">
+        <div className="mx-auto" style={{ maxWidth: '1000px' }}>
+          {activeSub === 'inventory' ? <HardwareInventoryView state={state} apiCall={apiCall} /> : <ProcessSettingsView state={state} apiCall={apiCall} />}
+        </div>
       </div>
     </div>
   );
@@ -348,36 +430,36 @@ function SettingsView({ state, apiCall }: { state: SystemState; apiCall: any }) 
 
 function MainTabButton({ active, onClick, label }: { active: boolean; onClick: () => void; label: string; }) {
   return (
-    <button onClick={onClick} className={`px-8 h-12 flex items-center text-[10px] font-black tracking-[0.2em] transition-all relative ${active ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
+    <button onClick={onClick} className={`px-6 h-12 flex items-center text-[11px] font-black tracking-widest transition-colors relative ${active ? 'text-blue-600' : 'text-slate-500 hover:text-slate-800'}`}>
       {label}
-      <div className={`absolute bottom-0 left-8 right-8 h-0.5 bg-blue-600 rounded-full transition-all ${active ? 'opacity-100 scale-x-100' : 'opacity-0 scale-x-0'}`} />
+      <div className={`absolute bottom-0 left-6 right-6 h-[3px] bg-blue-600 rounded-t-full transition-all ${active ? 'opacity-100 scale-x-100' : 'opacity-0 scale-x-0'}`} />
     </button>
   );
 }
 
 function ProcessSettingsView({ state, apiCall }: { state: SystemState; apiCall: any }) {
   return (
-    <div className="flex flex-col gap-12 max-w-5xl">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
-        <InputComponent label="Hattaki Hedef Şişe Adedi" value={state.process.targetBottles} unit="ADET" onChange={v => apiCall('/api/config', { targetBottles: v })} disabled={state.systemRunning} />
-        <InputComponent label="Kanal Dolum Bekleme Süresi" value={state.config.fillWaitTime} unit="MS" onChange={v => apiCall('/api/config', { fillWaitTime: v })} disabled={state.systemRunning} />
-        <InputComponent label="Lazer Sensör Zaman Aşımı" value={state.config.sensorTimeout} unit="MS" onChange={v => apiCall('/api/config', { sensorTimeout: v })} disabled={state.systemRunning} />
-        <InputComponent label="Vardiya Başı Üretim Kotası" value={state.config.dailyQuota} unit="ŞİŞE" onChange={v => apiCall('/api/config', { dailyQuota: v })} disabled={state.systemRunning} />
+    <div className="flex flex-col gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <InputComponent label="Hattaki Hedef Şişe" value={state.process.targetBottles} unit="ADET" onChange={v => apiCall('/api/config', { targetBottles: v })} disabled={state.systemRunning} />
+        <InputComponent label="Kanal Dolum Süresi" value={state.config.fillWaitTime} unit="MS" onChange={v => apiCall('/api/config', { fillWaitTime: v })} disabled={state.systemRunning} />
+        <InputComponent label="Sensör Zaman Aşımı" value={state.config.sensorTimeout} unit="MS" onChange={v => apiCall('/api/config', { sensorTimeout: v })} disabled={state.systemRunning} />
+        <InputComponent label="Vardiya Kotası" value={state.config.dailyQuota} unit="ŞİŞE" onChange={v => apiCall('/api/config', { dailyQuota: v })} disabled={state.systemRunning} />
       </div>
 
-      <div className={`p-10 bg-slate-50 border border-slate-100 ${RADIUS} relative overflow-hidden group`}>
-        <div className="flex items-center gap-3 mb-8">
-          <div className={`w-2 h-6 bg-blue-500 ${RADIUS}`} />
+      <div className={`p-6 bg-white border border-slate-200 shadow-sm ${RADIUS} relative overflow-hidden mt-2`}>
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-1.5 h-5 bg-gradient-to-b from-blue-400 to-blue-600 rounded-full" />
           <h4 className="text-[11px] font-black text-slate-800 tracking-widest uppercase">OTOMATİK YIKAMA (CIP) RUTİNLERİ</h4>
         </div>
-        <div className="flex gap-6 relative z-10">
-          <WashActionBtn label="SABAH AÇILIŞ RÜTİNİ" sub="60 SN / Hızlı Yıkama" onClick={() => apiCall('/api/wash', { duration: 60000 })} disabled={state.systemRunning || state.process.state === 'WASHING'} />
-          <WashActionBtn label="AKŞAM KAPANIŞ RÜTİNİ" sub="300 SN / Yoğun Deşarj" onClick={() => apiCall('/api/wash', { duration: 300000 })} disabled={state.systemRunning || state.process.state === 'WASHING'} />
+        <div className="flex gap-4 relative z-10 w-full mb-1">
+          <WashActionBtn label="SABAH AÇILIŞ" sub="60sn Hızlı" onClick={() => apiCall('/api/wash', { duration: 60000 })} disabled={state.systemRunning || state.process.state === 'WASHING'} primary />
+          <WashActionBtn label="AKŞAM KAPANIŞ" sub="300sn Detaylı" onClick={() => apiCall('/api/wash', { duration: 300000 })} disabled={state.systemRunning || state.process.state === 'WASHING'} />
         </div>
         {state.process.state === 'WASHING' && (
-          <div className="absolute inset-0 bg-blue-600/90 backdrop-blur-sm flex flex-col items-center justify-center text-white gap-4 pointer-events-auto">
-            <RefreshCw className="w-10 h-10 animate-spin" />
-            <span className="text-2xl font-black tracking-[0.3em] uppercase italic">CIP RUTİNİ İŞLENMEKTE...</span>
+          <div className="absolute inset-0 bg-blue-600/95 backdrop-blur-md flex flex-col items-center justify-center text-white gap-3 z-20 pointer-events-auto">
+            <RefreshCw className="w-8 h-8 animate-spin" />
+            <span className="text-lg font-black tracking-widest uppercase">CIP İŞLEMİ SÜRÜYOR</span>
           </div>
         )}
       </div>
@@ -387,22 +469,25 @@ function ProcessSettingsView({ state, apiCall }: { state: SystemState; apiCall: 
 
 function InputComponent({ label, value, unit, onChange, disabled }: { label: string; value: number; unit: string; onChange: (v: number) => void; disabled: boolean }) {
   return (
-    <div className="flex flex-col gap-3">
-      <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest leading-none">{label}</label>
-      <div className="relative">
+    <div className={`flex flex-col bg-white border border-slate-200 p-4 shadow-sm transition-all focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-50 ${RADIUS} ${disabled ? 'opacity-60 bg-slate-50/50' : ''}`}>
+      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">{label}</label>
+      <div className="relative flex items-center">
         <input type="number" disabled={disabled} value={value} onChange={e => onChange(parseInt(e.target.value)||0)}
-          className={`w-full h-16 bg-white border-2 border-slate-100 p-5 font-mono font-black text-3xl text-slate-800 outline-none focus:border-blue-500 transition-all ${RADIUS} disabled:opacity-40 shadow-sm`} />
-        <span className="absolute right-6 top-1/2 -translate-y-1/2 text-[10px] font-black text-blue-500 uppercase tracking-tighter">{unit}</span>
+          className="w-full bg-transparent font-mono font-black text-2xl text-slate-800 outline-none pb-1" />
+        <span className="text-[10px] font-black text-blue-500 bg-blue-50 px-2 py-1 rounded uppercase tracking-wider shrink-0">{unit}</span>
       </div>
     </div>
   );
 }
 
-function WashActionBtn({ label, sub, onClick, disabled }: { label: string; sub: string; onClick: () => void; disabled: boolean }) {
+function WashActionBtn({ label, sub, onClick, disabled, primary }: { label: string; sub: string; onClick: () => void; disabled: boolean; primary?: boolean }) {
   return (
-    <button onClick={onClick} disabled={disabled} className={`flex-1 h-32 bg-white border-2 border-slate-100 p-6 flex flex-col items-center justify-center transition-all shadow-sm ${RADIUS} hover:border-slate-800 active:scale-95 disabled:opacity-30 group`}>
-      <span className="text-lg font-black text-slate-800 group-hover:text-blue-600 transition-colors uppercase leading-none mb-2">{label}</span>
-      <span className="text-[11px] font-bold text-slate-400 uppercase tracking-tight">{sub}</span>
+    <button onClick={onClick} disabled={disabled} className={`flex-1 h-20 px-5 flex items-center justify-between transition-all border shadow-sm ${RADIUS} hover:shadow-md active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none group ${primary ? 'bg-blue-50 border-blue-200 hover:border-blue-300 hover:bg-blue-100' : 'bg-slate-50 border-slate-200 hover:bg-slate-100 hover:border-slate-300'}`}>
+      <div className="flex flex-col items-start gap-0.5">
+        <span className={`text-[13px] font-black uppercase tracking-wide ${primary ? 'text-blue-700' : 'text-slate-700'}`}>{label}</span>
+        <span className={`text-[10px] font-bold uppercase tracking-wider ${primary ? 'text-blue-500/80' : 'text-slate-400'}`}>{sub}</span>
+      </div>
+      <RefreshCw className={`w-5 h-5 transition-transform group-hover:rotate-180 ${primary ? 'text-blue-500' : 'text-slate-400'}`} />
     </button>
   );
 }
@@ -414,71 +499,90 @@ function HardwareInventoryView({ state, apiCall }: { state: SystemState; apiCall
   const [form, setForm] = useState<Partial<Device>>({ type: 'valve', target: 'nano', role: 'none', pin: '', name: '' });
 
   return (
-    <div className="flex flex-col gap-10">
-      <div className="flex justify-between items-center bg-slate-50 p-6 border border-slate-100 ${RADIUS}">
-        <div className="flex flex-col">
-          <h4 className="text-sm font-black text-slate-800 tracking-widest uppercase">ENVANTER KAYIT DEFTERİ</h4>
-          <span className="text-[10px] font-bold text-slate-400 mt-1 uppercase italic">{state.devices.length} Birim Sisteme Bağlı</span>
+    <div className="flex flex-col gap-6">
+      <div className={`flex justify-between items-center bg-white p-5 border border-slate-200 shadow-sm ${RADIUS}`}>
+        <div className="flex items-center gap-4">
+          <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-500">
+            <Cpu className="w-5 h-5" />
+          </div>
+          <div className="flex flex-col">
+            <h4 className="text-sm font-black text-slate-800 tracking-wider">CİHAZ DEFTERİ</h4>
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide mt-0.5">{state.devices.length} DONANIM BAĞLI</span>
+          </div>
         </div>
-        <button onClick={() => setIsAdding(true)} disabled={state.systemRunning} className={`h-12 px-10 bg-slate-900 text-white font-black text-xs uppercase shadow-xl hover:bg-slate-800 active:scale-95 transition-all ${RADIUS} disabled:opacity-30`}>
-          YENİ BİRİM TANIMLA
+        <button onClick={() => setIsAdding(true)} disabled={state.systemRunning} className={`h-10 px-5 bg-blue-600 text-white font-bold text-[11px] uppercase tracking-wider shadow-md hover:bg-blue-700 active:scale-95 transition-all ${RADIUS} disabled:opacity-40 flex items-center gap-2`}>
+          <PlusCircle className="w-4 h-4" /> YENİ BİRİM
         </button>
       </div>
 
       {isAdding && (
-        <div className={`bg-white border-2 border-slate-800 p-10 grid grid-cols-1 md:grid-cols-3 gap-8 shadow-2xl relative ${RADIUS} animate-in fade-in slide-in-from-top-4 duration-300`}>
-          <FormGroup label="Birim Tipi">
-            <select className="w-full h-14 border-2 border-slate-100 bg-slate-50 p-4 text-sm font-black outline-none focus:border-blue-500 ${RADIUS}" value={form.type} onChange={e=>setForm({...form, type: e.target.value as any})}>
-              <option value="valve">SOLENOID VALF</option>
-              <option value="motor">PNÖMATİK AKTÜATÖR</option>
-              <option value="laser_sensor">LAZER SENSÖR</option>
-            </select>
-          </FormGroup>
-          <FormGroup label="Haberleşme Sürücüsü">
-            <select className="w-full h-14 border-2 border-slate-100 bg-slate-50 p-4 text-sm font-black outline-none focus:border-blue-500 ${RADIUS}" value={form.target} onChange={e=>setForm({...form, target: e.target.value as any})}>
-              <option value="nano">PLC OUT (USB BRIDGE)</option>
-              <option value="raspi">MASTER (GPIO NATIVE)</option>
-            </select>
-          </FormGroup>
-          <FormGroup label="Lokal Adres (Pin)">
-            <input type="text" className="w-full h-14 border-2 border-slate-100 bg-slate-50 p-4 text-sm font-black outline-none focus:border-blue-500 ${RADIUS} uppercase" value={form.pin} onChange={e=>setForm({...form, pin: e.target.value})} placeholder="Ör: D8" />
-          </FormGroup>
-          <FormGroup label="Görünüm Etiketi (İsim)">
-            <input type="text" className="w-full h-14 border-2 border-slate-100 bg-slate-50 p-4 text-sm font-black outline-none focus:border-blue-500 ${RADIUS}" value={form.name} onChange={e=>setForm({...form, name: e.target.value})} placeholder="Ör: Giriş Pisti Kilidi" />
-          </FormGroup>
-          <FormGroup label="Proses İşlem Rolü">
-            <select className="w-full h-14 border-2 border-slate-100 bg-slate-50 p-4 text-sm font-black outline-none focus:border-blue-500 ${RADIUS}" value={form.role} onChange={e=>setForm({...form, role: e.target.value as any})}>
-              <option value="none">SADECE MANUEL TEST</option>
-              <option value="entry_laser">ANA GİRİŞ LAZERİ</option>
-              <option value="exit_laser">ANA ÇIKIŞ LAZERİ</option>
-              <option value="entry_lock">GİRİŞ BARİYERİ</option>
-              <option value="exit_lock">ÇIKIŞ BARİYERİ</option>
-              {Array.from({length:10}).map((_,i) => <option key={i} value={`valve_${i+1}`}>{i+1}. DOLUM NOZULU</option>)}
-            </select>
-          </FormGroup>
-          <div className="col-span-full flex justify-end gap-3 pt-6">
-            <button onClick={()=>setIsAdding(false)} className={`px-10 h-14 text-xs font-black border-2 border-slate-100 ${RADIUS}`}>İPTAL</button>
-            <button onClick={() => { apiCall('/api/devices', { device: { ...form, id: Math.random().toString(36).substr(2, 9) } }); setIsAdding(false); }} className={`px-16 h-14 bg-slate-900 text-white text-xs font-black uppercase shadow-xl ${RADIUS}`}>SİSTEME KAYDET</button>
+        <div className={`bg-white border-2 border-blue-400 p-6 shadow-xl relative ${RADIUS} animate-in fade-in slide-in-from-top-2 flex flex-col gap-5`}>
+          <div className="flex items-center gap-2 border-b border-slate-100 pb-3 mb-1">
+            <Settings className="w-4 h-4 text-blue-500" />
+            <span className="text-xs font-black text-slate-800 tracking-wider uppercase">Donanım Kayıt Formu</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <FormGroup label="Birim Tipi">
+              <select className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 uppercase outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 ${RADIUS}`} value={form.type} onChange={e=>setForm({...form, type: e.target.value as any})}>
+                <option value="valve">SOLENOID VALF</option>
+                <option value="motor">PNÖMATİK AKTÜATÖR</option>
+                <option value="laser_sensor">LAZER SENSÖR</option>
+              </select>
+            </FormGroup>
+            <FormGroup label="Sürücü / Hedef">
+              <select className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 uppercase outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 ${RADIUS}`} value={form.target} onChange={e=>setForm({...form, target: e.target.value as any})}>
+                <option value="nano">PLC (USB SERIAL)</option>
+                <option value="raspi">MASTER (NATIVE PINS)</option>
+              </select>
+            </FormGroup>
+            <FormGroup label="Bağlantı Pin'i">
+              <input type="text" className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 uppercase outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 ${RADIUS}`} value={form.pin} onChange={e=>setForm({...form, pin: e.target.value})} placeholder="Örnek: D8" />
+            </FormGroup>
+            <FormGroup label="Etiket Adı">
+              <input type="text" className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 ${RADIUS}`} value={form.name} onChange={e=>setForm({...form, name: e.target.value})} placeholder="Ör: Ana Valf" />
+            </FormGroup>
+            <FormGroup label="Mantıksal Rol">
+              <select className={`w-full h-11 border border-slate-200 bg-slate-50 px-3 text-[11px] font-bold text-slate-700 uppercase outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 ${RADIUS}`} value={form.role} onChange={e=>setForm({...form, role: e.target.value as any})}>
+                <option value="none">SADECE MANUEL TEST</option>
+                <option value="entry_laser">GİRİŞ LAZERİ</option>
+                <option value="exit_laser">ÇIKIŞ LAZERİ</option>
+                <option value="entry_lock">GİRİŞ BARİYERİ</option>
+                <option value="exit_lock">ÇIKIŞ BARİYERİ</option>
+                {Array.from({length:10}).map((_,i) => <option key={i} value={`valve_${i+1}`}>NOZUL {i+1} VALFİ</option>)}
+              </select>
+            </FormGroup>
+          </div>
+          <div className="flex justify-end gap-3 pt-2 mt-2 border-t border-slate-100">
+            <button onClick={()=>setIsAdding(false)} className={`px-6 h-10 text-[11px] font-black text-slate-500 hover:bg-slate-100 transition-colors ${RADIUS}`}>İPTAL ET</button>
+            <button onClick={() => { apiCall('/api/devices', { device: { ...form, id: Math.random().toString(36).substr(2, 9) } }); setIsAdding(false); }} className={`px-8 h-10 bg-blue-600 text-white text-[11px] font-black uppercase shadow-md hover:bg-blue-700 transition-colors ${RADIUS}`}>KAYDET</button>
           </div>
         </div>
       )}
 
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-2">
         {state.devices.map(dev => (
-          <div key={dev.id} className={`flex items-center justify-between p-6 bg-white border border-slate-100 hover:border-slate-300 transition-all duration-300 shadow-sm ${RADIUS}`}>
-            <div className="flex items-center gap-8">
-              <div className={`w-14 h-14 flex items-center justify-center border-2 transition-all ${RADIUS} ${dev.active ? 'bg-slate-900 border-slate-950 text-white shadow-xl' : 'bg-slate-50 border-slate-100 text-slate-300'}`}>
-                {dev.type === 'valve' ? <Droplet className="w-6 h-6" /> : <Microchip className="w-6 h-6" />}
+          <div key={dev.id} className={`flex items-center justify-between p-4 bg-white border border-slate-200 hover:border-blue-200 transition-colors shadow-sm focus-within:ring-1 focus-within:ring-blue-100 ${RADIUS}`}>
+            <div className="flex items-center gap-4 min-w-0">
+              <div className={`w-10 h-10 shrink-0 flex items-center justify-center border transition-all ${RADIUS} ${dev.active ? 'bg-blue-50 border-blue-200 text-blue-600' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
+                {dev.type === 'valve' ? <Droplet className="w-4 h-4" /> : <Microchip className="w-4 h-4" />}
               </div>
-              <div className="flex flex-col">
-                <span className="text-[11px] font-black text-blue-500 uppercase italic mb-0.5">{dev.role}</span>
-                <span className="text-base font-black text-slate-800 uppercase leading-none">{dev.name}</span>
-                <span className="text-[9px] font-bold text-slate-300 mt-1 uppercase">Bağlantı: {dev.target.toUpperCase()} / {dev.pin}</span>
+              <div className="flex flex-col min-w-0 truncate">
+                <div className="flex items-center gap-2 mb-0.5">
+                  <span className="text-[13px] font-black text-slate-800 uppercase truncate">{dev.name}</span>
+                  {dev.active && <span className="w-1.5 h-1.5 bg-green-500 rounded-full shrink-0" />}
+                </div>
+                <div className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-wider h-3">
+                  <span className="text-blue-500">{dev.role.replace('_', ' ')}</span>
+                  <span className="w-1 h-1 bg-slate-200 rounded-full" />
+                  <span className="text-slate-400">{dev.target} &rarr; {dev.pin}</span>
+                </div>
               </div>
             </div>
-            <div className="flex gap-3">
-              <button onClick={() => apiCall(`/api/devices/${dev.id}/trigger`, {})} className={`h-11 px-8 text-[11px] font-black border-2 border-slate-100 hover:border-slate-800 transition-all ${RADIUS}`}>TEST</button>
-              <button disabled={state.systemRunning} onClick={() => apiCall(`/api/devices/${dev.id}`, {}, 'DELETE')} className={`h-11 px-8 text-[11px] font-black border-2 border-rose-50 text-rose-500 hover:bg-rose-500 hover:text-white transition-all ${RADIUS}`}>SİL</button>
+            <div className="flex gap-2 shrink-0 ml-4">
+              <button onClick={() => apiCall(`/api/devices/${dev.id}/trigger`, {})} className={`h-9 px-4 text-[10px] font-black border border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-400 hover:bg-white transition-all ${RADIUS}`}>TEST</button>
+              <button disabled={state.systemRunning} onClick={() => apiCall(`/api/devices/${dev.id}`, {}, 'DELETE')} className={`h-9 px-3 border border-rose-100 bg-rose-50 text-rose-500 hover:bg-rose-500 hover:text-white transition-all ${RADIUS} disabled:opacity-40 disabled:pointer-events-none group`} title="Cihazı Sil">
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
         ))}
@@ -489,24 +593,36 @@ function HardwareInventoryView({ state, apiCall }: { state: SystemState; apiCall
 
 function FormGroup({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-2">
-      <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-1">{label}</label>
+    <div className="flex flex-col gap-1.5 min-w-0">
+      <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest pl-1">{label}</label>
       {children}
     </div>
   );
 }
 
+// ─── EMERGENCY ALARM SCREEN ───
+
 function EmergencyShutter({ onReset }: { onReset: () => void }) {
   return (
-    <div className="absolute inset-0 z-[100] bg-rose-600/95 backdrop-blur-xl flex flex-col items-center justify-center p-20 text-center animate-in fade-in duration-500">
-      <div className="bg-white p-12 rounded-full mb-12 shadow-[0_0_100px_rgba(255,255,255,0.4)] animate-bounce">
-        <AlertTriangle className="w-32 h-32 text-rose-600" />
+    <div className="absolute inset-0 z-[100] bg-zinc-950/95 flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-300">
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(225,29,72,0.15),transparent_70%)]" />
+      <div className="relative flex flex-col items-center max-w-2xl w-full translate-y-[-2vh]">
+        <div className="relative mb-8">
+          <div className="absolute inset-0 bg-rose-500 blur-3xl opacity-40 animate-pulse" />
+          <div className="w-28 h-28 bg-gradient-to-tr from-rose-600 to-rose-400 rounded-full flex items-center justify-center shadow-2xl relative z-10 border-4 border-rose-950">
+             <Lock className="w-12 h-12 text-white" />
+          </div>
+        </div>
+        <h1 className="text-5xl md:text-6xl font-black text-white leading-none uppercase tracking-tight drop-shadow-lg mb-3">SİSTEM KİLİTLİ</h1>
+        <p className="text-sm md:text-base text-rose-300 font-bold uppercase tracking-[0.4em] mb-12">Acil Stop Aktif Edildi</p>
+        <button onClick={onReset} className={`group relative w-full overflow-hidden bg-rose-600 p-1 flex items-center shadow-2xl transition hover:bg-rose-500 active:scale-[0.98] ${RADIUS}`}>
+          <div className={`bg-rose-950/50 w-full h-16 flex items-center justify-center gap-3 ${RADIUS}`}>
+            <Unlock className="w-5 h-5 text-rose-200 group-hover:text-white transition-colors" />
+            <span className="text-[13px] font-black text-rose-100 group-hover:text-white uppercase tracking-widest transition-colors">KİLİDİ AÇ VE GÜVENLİ SIFIRLA</span>
+          </div>
+        </button>
       </div>
-      <h1 className="text-8xl font-black text-white leading-none uppercase tracking-tighter drop-shadow-lg">SİSTEM DURDURULDU</h1>
-      <p className="text-2xl text-rose-100 font-bold uppercase tracking-[0.6em] mt-8 select-none">KRİTİK GÜVENLİK KİLİDİ AKTİF</p>
-      <button onClick={onReset} className={`mt-20 px-24 py-8 bg-white text-rose-600 font-black text-3xl shadow-2xl active:scale-95 transition-all ${RADIUS} hover:bg-rose-50`}>
-        SİSTEMİ GÜVENLE SIFIRLA
-      </button>
     </div>
   );
 }
+
