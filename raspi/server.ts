@@ -29,6 +29,7 @@ const ARDUINO_BAUDRATE  = parseInt(process.env.ARDUINO_BAUDRATE  || '115200');
 // ─── Sistem Durumu ───────────────────────────────────────────────────────────
 const state: SystemState = {
   systemRunning: false,
+  paused: false,
   emergencyStop: false,
   hasError: false,
   
@@ -51,6 +52,7 @@ const state: SystemState = {
     dropDelayMs: 500,      // Default 500ms damla bekleme süresi
     conveyorSpeed: 80,     // Default %80 Hız
   },
+  paused: false,
   devices: [],
 };
 
@@ -183,14 +185,14 @@ function finishCycle() {
     state.process.currentCycleId = undefined;
   }
   
-  // Eğer sistem hala açıksa yeni döngüye geç
-  if (state.systemRunning) {
+  if (state.systemRunning && !state.paused) {
     state.process.state = 'WAITING_ENTRY';
     state.process.currentCycleId = startCycle();
     openEntryGate();
     console.log('[SÜREÇ] Döngü tamamlandı. Yenisi başlıyor.');
   } else {
     state.process.state = 'IDLE';
+    if (state.paused) console.log('[SÜREÇ] Döngü bitti. Sistem DURAKLATILDIĞI için beklemeye alınıyor.');
   }
 }
 
@@ -304,6 +306,44 @@ async function startServer() {
     res.json(state);
   });
 
+  app.post('/api/pause', (req, res) => {
+    state.paused = req.body.paused;
+    console.log(`[SİSTEM] Duraklatma Durumu: ${state.paused}`);
+    
+    // Eğer duraklatma KALDIRILDI ve sistem hala RUNNING ise ama IDLE'da bekliyorsa tetikle
+    if (!state.paused && state.systemRunning && state.process.state === 'IDLE') {
+      state.process.state = 'WAITING_ENTRY';
+      state.process.currentCycleId = startCycle();
+      openEntryGate();
+    }
+    
+    res.json(state);
+  });
+
+  app.post('/api/cancel', (req, res) => {
+    state.systemRunning = false;
+    state.paused = false;
+    state.process.state = 'IDLE';
+    addAlarm('INFO', 'Süreç kullanıcı tarafından İPTAL EDİLDİ.');
+    
+    if (state.process.currentCycleId) {
+      completeCycle(state.process.currentCycleId, 'interrupted', state.process.bottlesInArea, 0);
+      state.process.currentCycleId = undefined;
+    }
+    
+    // PLC'ye dur komutu gönder (Valfleri ve kilitleri kapatması için)
+    if (arduino.isConnected) {
+      // Bütün bilinen kilit ve valfleri kapatmaya zorla
+      state.devices.forEach(d => {
+        if (d.target === 'nano' && (d.type === 'valve' || d.role.includes('lock'))) {
+          arduino.sendCommand(`CLOSE:${d.pin}`);
+        }
+      });
+    }
+    
+    res.json(state);
+  });
+
   app.post('/api/wash', (req, res) => {
     if (state.systemRunning) return res.status(400).json({ error: 'Sistem çalışırken yıkama yapılamaz' });
     if (state.emergencyStop) return res.status(400).json({ error: 'Acil stop aktif' });
@@ -325,10 +365,15 @@ async function startServer() {
     console.log(`[SÜREÇ] Darbeli CIP Yıkama Başlıyor (Hedef: ${totalDuration}ms)`);
 
     const washInterval = setInterval(() => {
-      if (elapsed >= totalDuration || state.emergencyStop) {
+      if (elapsed >= totalDuration || state.emergencyStop || !state.systemRunning && state.process.state !== 'WASHING') {
         clearInterval(washInterval);
         state.process.state = 'IDLE';
         console.log('[SÜREÇ] CIP Yıkama Bitti veya Durduruldu.');
+        return;
+      }
+
+      if (state.paused) {
+        // Duraklatılmışsa bu darbeyi atla (elapsed artmaz)
         return;
       }
 

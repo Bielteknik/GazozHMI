@@ -1,5 +1,6 @@
 export interface SystemState {
   systemRunning: boolean;
+  paused: boolean;
   emergencyStop: boolean;
   hasError?: boolean;
   

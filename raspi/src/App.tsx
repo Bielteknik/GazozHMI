@@ -70,6 +70,29 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
+            {state.systemRunning && (
+              <div className="flex items-center gap-2 mr-2">
+                <button 
+                  onClick={() => apiCall('/api/pause', { paused: !state.paused })}
+                  className={`h-11 px-4 ${RADIUS} font-bold text-xs border-2 transition-all flex items-center gap-2 ${
+                    state.paused 
+                      ? 'bg-blue-600 text-white border-blue-700 shadow-lg shadow-blue-100' 
+                      : 'bg-white text-blue-600 border-blue-100 hover:bg-blue-50'
+                  }`}
+                  title={state.paused ? 'Sistemi Devam Ettir' : 'Sistemi Geçici Olarak Durdur (Güvenli Bekleme)'}
+                >
+                  {state.paused ? <Play className="w-4 h-4 fill-white" /> : <Timer className="w-4 h-4" />}
+                  <span>{state.paused ? 'DEVAM ET' : 'DURAKLAT'}</span>
+                </button>
+                <button 
+                  onClick={() => { if(confirm('Süreç iptal edilecek ve tüm valfler kapatılacak. Emin misiniz?')) apiCall('/api/cancel'); }}
+                  className={`h-11 px-4 ${RADIUS} font-bold text-xs bg-white text-slate-500 border-2 border-slate-100 hover:text-slate-800 hover:border-slate-300 transition-all flex items-center gap-2`}
+                  title="Mevcut üretimi iptal et ve BAŞA dön"
+                >
+                  <Square className="w-3.5 h-3.5" /> İPTAL
+                </button>
+              </div>
+            )}
             <SystemToggle 
               running={state.systemRunning} 
               disabled={state.emergencyStop || state.process.state === 'WASHING'} 
@@ -211,6 +234,10 @@ function ConsoleView({ state }: { state: SystemState }) {
     if (prev.process.state !== state.process.state)
       entries.push(mkLog('INFO', `Proses fazı: ${prev.process.state} → ${state.process.state}`));
 
+    if (prev.paused !== state.paused)
+      entries.push(mkLog(state.paused ? 'WARN' : 'OK',
+        state.paused ? 'Sistem kullanıcı tarafından DURAKLATILDI.' : 'Sistem DEVAM ETTİRİLİYOR.'));
+
     if (prev.process.bottlesInArea !== state.process.bottlesInArea) {
       const d = state.process.bottlesInArea - prev.process.bottlesInArea;
       entries.push(mkLog('INFO',
@@ -264,9 +291,10 @@ function ConsoleView({ state }: { state: SystemState }) {
         <KVPair k="ÇIKIŞ SAYACI" v={String(outSensor?.count ?? 0)} textColor="text-blue-700" />
         
         <div className="ml-auto flex gap-4">
-          {state.systemRunning && <span className="text-[10px] font-black tracking-widest text-emerald-600 flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"/>ÇALIŞIYOR</span>}
+          {state.paused && <span className="text-[10px] font-black tracking-widest text-blue-600 flex items-center gap-1.5 animate-pulse"><Timer className="w-3.5 h-3.5"/>DURAKLATILDI</span>}
+          {state.systemRunning && !state.paused && <span className="text-[10px] font-black tracking-widest text-emerald-600 flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"/>ÇALIŞIYOR</span>}
           {state.emergencyStop && <span className="text-[10px] font-black tracking-widest text-rose-600 flex items-center gap-1.5 animate-pulse"><AlertTriangle className="w-3.5 h-3.5"/>ACİL STOP</span>}
-          {!state.systemRunning && !state.emergencyStop && <span className="text-[10px] font-black tracking-widest text-slate-500 flex items-center gap-1.5"><div className="w-2 h-2 rounded-full border-2 border-slate-500"/>DURAKLADI</span>}
+          {!state.systemRunning && !state.emergencyStop && <span className="text-[10px] font-black tracking-widest text-slate-500 flex items-center gap-1.5"><div className="w-2 h-2 rounded-full border-2 border-slate-500"/>BEKLEMEDE</span>}
         </div>
       </div>
 
