@@ -30,6 +30,7 @@ export interface SystemState {
   
   devices: Device[]; // 100% dinamik donanımlar
   rawLogs: CommLog[]; // Son haberleşme kayıtları (UI buffer)
+  washHistory: WashLog[]; // Yıkama geçmişi
   notifications: SystemNotification[]; // Anlık bildirimler
 }
 
@@ -118,4 +119,12 @@ export interface Alarm {
   type: 'ESTOP' | 'SENSOR_FAULT' | 'MOTOR_FAULT' | 'INFO';
   message: string;
   resolved_at?: string;
+}
+
+export interface WashLog {
+  id: number;
+  timestamp: string;
+  type: string;        // 'SABAH', 'AKŞAM', 'MANUEL'
+  duration_ms: number;
+  status: string;      // 'TAMAMLANDI', 'İPTAL EDİLDİ'
 }

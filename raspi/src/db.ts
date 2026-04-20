@@ -54,6 +54,14 @@ export async function initDb(): Promise<void> {
       resolved_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS wash_history (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp    TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+      type         TEXT    NOT NULL,
+      duration_ms  INTEGER NOT NULL,
+      status       TEXT    NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS devices (
       id              TEXT PRIMARY KEY,
       name            TEXT NOT NULL,
@@ -222,5 +230,24 @@ export function saveDevice(device: Device): void {
 export function deleteDevice(id: string): void {
   db.run('DELETE FROM devices WHERE id = ?', [id]);
   persist();
+}
+
+// ─── Yıkama Geçmişi ──────────────────────────────────────────────────────────
+export function addWashLog(type: string, duration_ms: number, status: string): void {
+  db.run('INSERT INTO wash_history (type, duration_ms, status) VALUES (?, ?, ?)', [type, duration_ms, status]);
+  persist();
+}
+
+export function getWashHistory(): any[] {
+  const res = db.exec('SELECT id, timestamp, type, duration_ms, status FROM wash_history ORDER BY id DESC LIMIT 50');
+  if (!res.length) return [];
+  const { columns, values } = res[0];
+  return values.map(row => ({
+    id: Number(row[0]),
+    timestamp: String(row[1]),
+    type: String(row[2]),
+    duration_ms: Number(row[3]),
+    status: String(row[4])
+  }));
 }
 

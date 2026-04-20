@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import {
   Activity, Settings, AlertTriangle, Droplet, Cpu, ScanLine,
   Play, Square, Lock, Unlock, Timer, Terminal, History, Bell,
-  PlusCircle, Trash2, Cpu as Microchip, LayoutDashboard, Map as MapIcon, RefreshCw, Layers, Shield
+  PlusCircle, Trash2, Cpu as Microchip, LayoutDashboard, Map as MapIcon, RefreshCw, Layers, Shield, Pause
 } from 'lucide-react';
 import { SystemState, Device, SystemNotification } from './types';
 
@@ -12,7 +12,7 @@ const OUTER_GAP = "p-[10px]"; // 10px
 
 export default function App() {
   const [state, setState] = useState<SystemState | null>(null);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'system'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'system' | 'washing'>('dashboard');
 
   useEffect(() => {
     const fetchState = async () => {
@@ -35,8 +35,15 @@ export default function App() {
         body:    method !== 'GET' ? JSON.stringify(payload) : undefined,
       });
       const data = await res.json();
-      if (!data.error) setState(data);
-    } catch (e) { console.error(`API hatası: ${endpoint}`, e); }
+      if (data.error) {
+        alert(data.error);
+        return;
+      }
+      setState(data);
+    } catch (e) { 
+      console.error(`API hatası: ${endpoint}`, e);
+      alert('Sistem bağlantı hatası!');
+    }
   };
 
   if (!state) return (
@@ -65,6 +72,7 @@ export default function App() {
             
             <nav className="flex gap-1 h-full">
               <TabLink active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard className="w-4 h-4" />} label="ANA PANEL" />
+              <TabLink active={activeTab === 'washing'}   onClick={() => setActiveTab('washing')} icon={<RefreshCw className="w-4 h-4" />} label="YIKAMA" />
               <TabLink active={activeTab === 'system'}    onClick={() => setActiveTab('system')} icon={<Settings className="w-4 h-4" />} label="AYARLAR" />
             </nav>
           </div>
@@ -93,11 +101,19 @@ export default function App() {
                 </button>
               </div>
             )}
-            <SystemToggle 
-              running={state.systemRunning} 
-              disabled={state.emergencyStop || state.process.state === 'WASHING'} 
-              onClick={() => apiCall('/api/system', { running: !state.systemRunning })}
-            />
+            {(() => {
+              const today = new Date().toISOString().split('T')[0];
+              const morningWash = state.washHistory?.find(l => l.timestamp.startsWith(today) && l.type === 'SABAH' && l.status === 'TAMAMLANDI');
+              
+              return (
+                <SystemToggle 
+                  running={state.systemRunning} 
+                  disabled={state.emergencyStop || state.process.state === 'WASHING' || !morningWash} 
+                  onClick={() => apiCall('/api/system', { running: !state.systemRunning })}
+                  title={!morningWash ? 'Lütfen önce Sabah Açılış yıkamasını yapın' : ''}
+                />
+              );
+            })()}
             <button 
               onClick={() => apiCall('/api/estop', { active: !state.emergencyStop })}
               className={`h-11 px-6 ${RADIUS} font-bold text-xs border-2 transition-all flex items-center gap-2 ${
@@ -124,6 +140,7 @@ export default function App() {
 
           {activeTab === 'dashboard' && <DashboardView state={state} apiCall={apiCall} />}
           {activeTab === 'system'    && <SettingsView  state={state} apiCall={apiCall} />}
+          {activeTab === 'washing'   && <WashingView   state={state} apiCall={apiCall} />}
         </main>
       </div>
     </div>
@@ -712,7 +729,7 @@ function QuickCmdBtn({ label, onClick, color, disabled }: { label:string; onClic
 }
 
 function ProcessSettingsView({ state, apiCall }: { state: SystemState; apiCall: any }) {
-  const [activeTab, setActiveTab] = useState<'calib'|'cap'|'safe'|'cip'>('calib');
+  const [activeTab, setActiveTab] = useState<'calib'|'cap'|'safe'>('calib');
   const [customCip, setCustomCip] = useState(1);
 
   const tVol = state.config.targetVolumeML || 40;
@@ -724,7 +741,6 @@ function ProcessSettingsView({ state, apiCall }: { state: SystemState; apiCall: 
         <ProcessTabBtn active={activeTab==='calib'} onClick={()=>setActiveTab('calib')} icon={<Droplet className="w-4 h-4"/>} label="KALİBRASYON" />
         <ProcessTabBtn active={activeTab==='cap'} onClick={()=>setActiveTab('cap')} icon={<Activity className="w-4 h-4"/>} label="KAPASİTE" />
         <ProcessTabBtn active={activeTab==='safe'} onClick={()=>setActiveTab('safe')} icon={<Shield className="w-4 h-4"/>} label="GÜVENLİK" />
-        <ProcessTabBtn active={activeTab==='cip'} onClick={()=>setActiveTab('cip')} icon={<RefreshCw className="w-4 h-4"/>} label="YIKAMA (CIP)" />
       </div>
 
       <div className="p-6 md:p-8 flex-1 overflow-y-auto bg-slate-50/10">
@@ -756,37 +772,6 @@ function ProcessSettingsView({ state, apiCall }: { state: SystemState; apiCall: 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
              <InputComponent label="Sensör Zaman Aşımı" value={state.config.sensorTimeout} unit="MS" onChange={v => apiCall('/api/config', { sensorTimeout: v })} disabled={state.systemRunning} />
              <InputComponent label="Valf Damlatma Bekleme (Gecikme)" value={state.config.dropDelayMs || 500} unit="MS" onChange={v => apiCall('/api/config', { dropDelayMs: v })} disabled={state.systemRunning} />
-          </div>
-        )}
-
-        {activeTab === 'cip' && (
-          <div className="flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 relative z-10 w-full mb-2">
-              <WashActionBtn label="SABAH AÇILIŞ" sub="60 saniye Hızlı" onClick={() => apiCall('/api/wash', { duration: 60000 })} disabled={state.systemRunning || state.process.state === 'WASHING'} primary />
-              <WashActionBtn label="AKŞAM KAPANIŞ" sub="300 saniye Detaylı" onClick={() => apiCall('/api/wash', { duration: 300000 })} disabled={state.systemRunning || state.process.state === 'WASHING'} />
-            </div>
-            
-            <div className={`p-6 border border-slate-200 bg-white flex flex-col md:flex-row items-start md:items-center justify-between gap-6 ${RADIUS} shadow-sm border-t-4 border-t-blue-500`}>
-               <div className="flex flex-col flex-1 w-full">
-                 <span className="text-[11px] font-black uppercase tracking-widest text-slate-800 mb-3 block border-b border-slate-100 pb-2">Özel Süreli Manuel Yıkama Uzunluğu (Dakika)</span>
-                 <div className="flex gap-4 w-full mt-2">
-                    <div className="relative flex-1">
-                      <input type="number" min="1" max="60" value={customCip} onChange={e=>setCustomCip(parseInt(e.target.value)||1)} disabled={state.systemRunning || state.process.state === 'WASHING'} className="w-full h-11 px-4 border text-[13px] border-slate-300 font-black text-slate-700 outline-none focus:border-blue-500 disabled:opacity-50 rounded" />
-                      <span className="absolute right-4 top-0 bottom-0 flex items-center text-[10px] font-black text-slate-400">DAKİKA</span>
-                    </div>
-                    <button onClick={() => apiCall('/api/wash', { duration: customCip * 60000 })} disabled={state.systemRunning || state.process.state === 'WASHING'} className={`h-11 px-8 bg-blue-600 text-white text-[11px] font-black uppercase flex items-center gap-2 hover:bg-blue-700 transition shadow-md rounded disabled:opacity-50 shrink-0`}>
-                       <Play className="w-4 h-4 fill-white"/> BAŞLAT
-                    </button>
-                 </div>
-               </div>
-            </div>
-
-            {state.process.state === 'WASHING' && (
-              <div className="absolute inset-0 bg-blue-600/95 backdrop-blur-md flex flex-col items-center justify-center text-white gap-4 z-20 pointer-events-auto rounded-lg shadow-2xl">
-                <RefreshCw className="w-10 h-10 animate-spin" />
-                <span className="text-xl font-black tracking-widest uppercase text-white shadow-sm">CIP İŞLEMİ SÜRÜYOR</span>
-              </div>
-            )}
           </div>
         )}
       </div>
@@ -1236,6 +1221,146 @@ function CounterSettingsView({ state, apiCall }: { state: SystemState; apiCall: 
           </div>
         ))}
         {sensors.length === 0 && <div className="col-span-2 p-12 text-center text-slate-400 font-bold uppercase tracking-widest bg-white border border-dashed border-slate-300 rounded-lg">Tanımlı sensör bulunamadı.</div>}
+      </div>
+    </div>
+  );
+}
+
+// ─── WASHING VIEW (NEW) ──────────────────────────────────────
+
+function WashingView({ state, apiCall }: { state: SystemState; apiCall: any }) {
+  const [customCip, setCustomCip] = useState(1);
+
+  return (
+    <div className="h-full flex flex-col md:flex-row bg-slate-50 overflow-hidden">
+      {/* Sol Panel: Kontroller */}
+      <div className="w-full md:w-[450px] border-r border-slate-200 bg-white p-8 overflow-y-auto flex flex-col gap-8 shrink-0">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center text-blue-600 shadow-sm border border-blue-100">
+            <RefreshCw className="w-6 h-6" />
+          </div>
+          <div className="flex flex-col">
+            <h2 className="text-lg font-black text-slate-800 tracking-tight leading-tight">CIP KONTROL MERKEZİ</h2>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none mt-1">HİJYEN VE BAKIM YÖNETİMİ</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4">
+          <WashActionBtn label="SABAH AÇILIŞ" sub="60 saniye Hızlı" onClick={() => apiCall('/api/wash', { duration: 60000, type: 'SABAH' })} disabled={state.systemRunning || state.process.state === 'WASHING'} primary />
+          <WashActionBtn label="AKŞAM KAPANIŞ" sub="300 saniye Detaylı" onClick={() => apiCall('/api/wash', { duration: 300000, type: 'AKŞAM' })} disabled={state.systemRunning || state.process.state === 'WASHING'} />
+        </div>
+
+        <div className={`p-6 border border-slate-200 bg-white flex flex-col items-start justify-between gap-4 ${RADIUS} shadow-sm border-t-4 border-t-blue-500`}>
+          <span className="text-[11px] font-black uppercase tracking-widest text-slate-800 block border-b border-slate-100 pb-2 w-full">Özel Süreli Manuel Yıkama</span>
+          <div className="flex gap-3 w-full mt-2">
+            <div className="relative flex-1">
+              <input type="number" min="1" max="60" value={customCip} onChange={e=>setCustomCip(parseInt(e.target.value)||1)} disabled={state.systemRunning || state.process.state === 'WASHING'} className="w-full h-12 px-4 border-2 text-[14px] border-slate-100 bg-slate-50 font-black text-slate-700 outline-none focus:border-blue-500 disabled:opacity-50 rounded-lg transition-all" />
+              <span className="absolute right-4 top-0 bottom-0 flex items-center text-[10px] font-black text-slate-400 uppercase">Dakika</span>
+            </div>
+            <button onClick={() => apiCall('/api/wash', { duration: customCip * 60000, type: 'MANUEL' })} disabled={state.systemRunning || state.process.state === 'WASHING'} className={`h-12 px-8 bg-blue-600 text-white text-[11px] font-black uppercase flex items-center gap-2 hover:bg-blue-700 transition shadow-lg shadow-blue-100 rounded-lg disabled:opacity-50 shrink-0`}>
+                <Play className="w-4 h-4 fill-white"/> BAŞLAT
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200 shadow-inner">
+          <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-1">Puls Parametreleri</span>
+          <div className="grid grid-cols-2 gap-3">
+             <div className="flex flex-col gap-1.5">
+               <span className="text-[9px] font-bold text-slate-400 uppercase">Valf Açık (MS)</span>
+               <input type="number" value={state.config.washPulseActiveMs} onChange={e => apiCall('/api/config', { washPulseActiveMs: parseInt(e.target.value)||0 })} className={`h-10 px-3 bg-white border border-slate-200 rounded-lg text-xs font-black outline-none focus:border-blue-400 transition-all`} />
+             </div>
+             <div className="flex flex-col gap-1.5">
+               <span className="text-[9px] font-bold text-slate-400 uppercase">Bekleme (MS)</span>
+               <input type="number" value={state.config.washPulseWaitMs} onChange={e => apiCall('/api/config', { washPulseWaitMs: parseInt(e.target.value)||0 })} className={`h-10 px-3 bg-white border border-slate-200 rounded-lg text-xs font-black outline-none focus:border-blue-400 transition-all`} />
+             </div>
+          </div>
+        </div>
+
+        {state.process.state === 'WASHING' && (
+          <div className="absolute inset-0 bg-slate-900/90 backdrop-blur-xl flex flex-col items-center justify-center text-white gap-8 z-30 pointer-events-auto rounded-lg shadow-2xl border-4 border-blue-500/30 overflow-hidden">
+            <div className="relative flex items-center justify-center">
+                <RefreshCw className="w-24 h-24 text-blue-500/20 animate-spin absolute" style={{ animationDuration: '3s' }} />
+                <div className="flex flex-col items-center">
+                  <span className="text-5xl font-black font-mono tracking-tighter text-blue-400 drop-shadow-[0_0_15px_rgba(96,165,250,0.5)]">
+                    {state.process.washProgress || 0}
+                  </span>
+                  <span className="text-[10px] font-bold tracking-[0.3em] text-blue-200/50 uppercase mt-2">SANİYE KALDI</span>
+                </div>
+            </div>
+            
+            <div className="flex flex-col items-center gap-2">
+              <span className="text-lg font-black tracking-widest text-white uppercase bg-blue-600/20 px-6 py-2 rounded-full border border-blue-500/30">CIP YIKAMA SÜRÜYOR</span>
+              {state.paused && <span className="text-[10px] font-black text-amber-400 animate-pulse uppercase tracking-widest">SİSTEM DURAKLATILDI</span>}
+            </div>
+
+            <div className="flex gap-4">
+                <button onClick={() => apiCall('/api/pause', { paused: !state.paused })} className={`h-14 px-8 rounded-xl font-black text-[11px] tracking-widest uppercase transition-all flex items-center gap-3 border shadow-lg ${state.paused ? 'bg-emerald-500 border-emerald-400 text-white shadow-emerald-500/20' : 'bg-amber-500 border-amber-400 text-white shadow-amber-500/20'}`}>
+                  {state.paused ? <Play className="w-4 h-4 fill-white"/> : <Pause className="w-4 h-4 fill-white"/>}
+                  {state.paused ? 'DEVAM ET' : 'BEKLET'}
+                </button>
+                <button onClick={() => apiCall('/api/cancel', {})} className="h-14 px-8 bg-rose-600 border border-rose-500 text-white rounded-xl font-black text-[11px] tracking-widest uppercase transition-all flex items-center gap-3 shadow-lg shadow-rose-500/20 hover:bg-rose-700 active:scale-95">
+                  <Square className="w-4 h-4 fill-white"/> İPTAL ET
+                </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Sağ Panel: Yıkama Logları */}
+      <div className="flex-1 p-8 flex flex-col gap-6 overflow-hidden">
+        <div className="flex items-center justify-between">
+          <div className="flex flex-col">
+            <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest leading-none">YIKAMA GEÇMİŞİ</h3>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2 leading-none">SİSTEM KALICI OLARAK LOGLUYOR</span>
+          </div>
+          <div className="h-8 px-4 bg-white border border-slate-200 rounded-full flex items-center gap-2 shadow-sm">
+             <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+             <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">VERİTABANI AKTİF</span>
+          </div>
+        </div>
+
+        <div className="flex-1 bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col">
+          <div className="grid grid-cols-5 bg-slate-50 px-6 py-4 border-b border-slate-200 text-[10px] font-black text-slate-500 uppercase tracking-widest">
+             <div className="col-span-1">TARİH / SAAT</div>
+             <div className="col-span-1 text-center">TİP</div>
+             <div className="col-span-1 text-center">HEDEF SÜRE</div>
+             <div className="col-span-1 text-center">DURUM</div>
+             <div className="col-span-1 text-right pr-2">KAYIT NO</div>
+          </div>
+          
+          <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-200">
+             {state.washHistory?.map(log => (
+               <div key={log.id} className="grid grid-cols-5 px-6 py-4 border-b border-slate-50 hover:bg-slate-50 transition-colors items-center group">
+                  <div className="col-span-1 flex flex-col gap-0.5">
+                    <span className="text-[12px] font-black text-slate-800 font-mono tracking-tighter">{log.timestamp.split(' ')[1]}</span>
+                    <span className="text-[9px] font-bold text-slate-400 uppercase">{log.timestamp.split(' ')[0]}</span>
+                  </div>
+                  <div className="col-span-1 text-center">
+                    <span className={`px-2 py-1 rounded-md text-[9px] font-black border uppercase ${log.type === 'SABAH' ? 'bg-indigo-50 border-indigo-100 text-indigo-600' : log.type === 'AKŞAM' ? 'bg-slate-900 border-slate-800 text-white' : 'bg-blue-50 border-blue-100 text-blue-600'}`}>
+                      {log.type}
+                    </span>
+                  </div>
+                  <div className="col-span-1 text-center">
+                    <span className="text-[11px] font-black text-slate-600 font-mono italic">{Math.round(log.duration_ms / 1000)}s</span>
+                  </div>
+                  <div className="col-span-1 text-center">
+                    <div className="flex items-center justify-center gap-2">
+                       <div className={`w-1.5 h-1.5 rounded-full ${log.status === 'TAMAMLANDI' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                       <span className={`text-[10px] font-black uppercase ${log.status === 'TAMAMLANDI' ? 'text-emerald-700' : 'text-rose-700'}`}>{log.status}</span>
+                    </div>
+                  </div>
+                  <div className="col-span-1 text-right text-[10px] font-black text-slate-200 group-hover:text-slate-400 transition-colors pr-2">#{log.id}</div>
+               </div>
+             ))}
+             {(!state.washHistory || state.washHistory.length === 0) && (
+               <div className="flex flex-col items-center justify-center py-20 gap-4 opacity-20">
+                  <RefreshCw className="w-16 h-16 text-slate-300" />
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest font-mono">Log Datası Bulunamadı</span>
+               </div>
+             )}
+          </div>
+        </div>
       </div>
     </div>
   );

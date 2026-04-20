@@ -8,7 +8,8 @@ import {
   initDb, loadConfig, saveConfig,
   startCycle, completeCycle, getProductionHistory,
   addAlarm, resolveAlarm, getAlarms,
-  getDevices, saveDevice, deleteDevice
+  getDevices, saveDevice, deleteDevice,
+  addWashLog, getWashHistory
 } from './src/db';
 import { ArduinoManager } from './src/arduino';
 
@@ -52,8 +53,11 @@ const state: SystemState = {
     dailyQuota: 10000,
     dropDelayMs: 500,      // Default 500ms damla bekleme süresi
     conveyorSpeed: 80,     // Default %80 Hız
+    washPulseActiveMs: 5000,
+    washPulseWaitMs: 2000,
   },
   devices: [], // startServer içinde yüklenecek
+  washHistory: [],
   rawLogs: [],
   notifications: []
 };
@@ -169,7 +173,7 @@ function setupGpioWatchers() {
             state.process.bottlesInArea = dev.count;
 
             if (state.process.bottlesInArea >= state.process.targetBottles) {
-              dev.count = 0; // Sıfırla
+              dev.count = 0; // Kendi sayacını sıfırla
               startAutonomousFilling();
             }
           } 
@@ -180,6 +184,7 @@ function setupGpioWatchers() {
             
             if (dev.count >= state.process.targetBottles) {
               dev.count = 0;
+              logComm('INTERNAL', 'SYSTEM', 'Tüm şişeler çıktı. Yeni döngü başlıyor.', 'OK');
               finishCycle();
             }
           }
@@ -262,8 +267,11 @@ function startAutonomousFilling() {
   closeEntryGate();
   state.process.state = 'FILLING';
   
-  // 1 saniye kilit güvenliği beklemesi
+  logComm('INTERNAL', 'SYSTEM', 'Giriş kilidi kapatıldı. 3 saniye dolum öncesi bekleniyor...', 'INFO');
+  
+  // 3 saniye kilit güvenliği ve şişe yerleşimi beklemesi
   setTimeout(() => {
+    if (state.process.state !== 'FILLING') return; // İptal edilmiş olabilir
     // Nano'ya hangi valfleri ne kadar süreyle açacağını hesaplayıp gönder
     const fillCmdParts: string[] = [];
     const targetML = state.config.targetVolumeML || 40;
@@ -293,6 +301,7 @@ function startAutonomousFilling() {
 }
 
 function finishCycle() {
+  logComm('INTERNAL', 'SYSTEM', 'Çıkış tamamlandı. Kapılar yer değiştiriyor.', 'INFO');
   closeExitGate();
   state.process.bottlesInArea = 0;
   
@@ -302,13 +311,15 @@ function finishCycle() {
   }
   
   if (state.systemRunning && !state.paused) {
-    state.process.state = 'WAITING_ENTRY';
-    state.process.currentCycleId = startCycle();
-    openEntryGate();
-    console.log('[SÜREÇ] Döngü tamamlandı. Yenisi başlıyor.');
+    // 500ms sonra girişi aç (mekanik sarsıntıyı önlemek için)
+    setTimeout(() => {
+      state.process.state = 'WAITING_ENTRY';
+      state.process.currentCycleId = startCycle();
+      openEntryGate();
+      logComm('INTERNAL', 'SYSTEM', 'Yeni döngüye geçildi: Giriş kapısı açıldı.', 'INFO');
+    }, 500);
   } else {
     state.process.state = 'IDLE';
-    if (state.paused) console.log('[SÜREÇ] Döngü bitti. Sistem DURAKLATILDIĞI için beklemeye alınıyor.');
   }
 }
 
@@ -347,6 +358,13 @@ async function startServer() {
         await arduino.sendCommand(`PINCFG:${typeStr}:${dev.pin}`);
       }
     }
+
+    // Sistem başlarken bütün kilitleri kapat (Giriş ve Çıkış)
+    setTimeout(() => {
+       console.log('[SİSTEM] Başlangıç güvenliği: Kapılar kapatılıyor...');
+       closeEntryGate();
+       closeExitGate();
+    }, 2000);
   });
 
   arduino.on('disconnected', () => {
@@ -365,12 +383,16 @@ async function startServer() {
   arduino.on('data', (line: string) => {
     logComm('IN', 'NANO', line, line.startsWith('ERR:') ? 'ERROR' : 'INFO');
     if (line === 'FILL_DONE' && state.process.state === 'FILLING') {
-      state.process.state = 'WAITING_EXIT';
-      console.log('[SÜREÇ] Dolumlar Tamamlandı. Çıkış bekleniyor.');
-      openExitGate();
+      console.log('[SÜREÇ] Dolumlar Tamamlandı. 500ms bekleniyor...');
+      setTimeout(() => {
+        state.process.state = 'WAITING_EXIT';
+        console.log('[SÜREÇ] Çıkış kapısı açılıyor.');
+        openExitGate();
+      }, 500);
     } else if (line === 'FILL_DONE' && state.process.state === 'WASHING') {
-      state.process.state = 'IDLE';
-      console.log('[SÜREÇ] CIP Yıkama Tamamlandı.');
+      // Yıkama sırasında FILL_DONE gelmesi normaldir (her darbe sonrası gelir).
+      // Tüm yıkama sürecini bitirmemeli, sadece loglanabilir.
+      console.log('[SÜREÇ] Yıkama darbesi tamamlandı.');
     } else if (line.startsWith('ERR:')) {
       addAlarm('MOTOR_FAULT', `Pano Hatası: ${line}`);
       state.hasError = true;
@@ -383,6 +405,7 @@ async function startServer() {
   app.use(express.json());
 
   app.get('/api/state', (_req, res) => {
+    state.washHistory = getWashHistory();
     res.json(state);
   });
 
@@ -410,6 +433,16 @@ async function startServer() {
     state.systemRunning = req.body.running;
     
     if (state.systemRunning && !wasRunning) {
+      // Yıkama kontrolü
+      const history = getWashHistory();
+      const today = new Date().toISOString().split('T')[0];
+      const morningWash = history.find(l => l.timestamp.startsWith(today) && l.type === 'SABAH' && l.status === 'TAMAMLANDI');
+      
+      if (!morningWash) {
+        state.systemRunning = false;
+        return res.status(400).json({ error: 'Önce Sabah Açılış yıkamasını yapmalısınız.' });
+      }
+
       logComm('INTERNAL', 'SYSTEM', 'Üretim Hattı Başlatıldı', 'INFO');
       // Sistemi Başlat
       state.process.state = 'WAITING_ENTRY';
@@ -447,6 +480,10 @@ async function startServer() {
   });
 
   app.post('/api/cancel', (req, res) => {
+    if (state.process.state === 'WASHING') {
+       addWashLog('MANUEL', 0, 'İPTAL EDİLDİ');
+    }
+
     state.systemRunning = false;
     state.paused = false;
     state.process.state = 'IDLE';
@@ -475,7 +512,9 @@ async function startServer() {
     if (state.emergencyStop) return res.status(400).json({ error: 'Acil stop aktif' });
 
     const totalDuration = req.body.duration || 60000;
+    const washType = req.body.type || 'MANUEL';
     state.process.state = 'WASHING';
+    state.process.washProgress = Math.floor(totalDuration / 1000);
     
     const washValves = state.devices.filter(d => d.target === 'nano' && d.type === 'valve');
     if (washValves.length === 0) {
@@ -483,36 +522,51 @@ async function startServer() {
       return res.json(state);
     }
 
-    let elapsed = 0;
-    const pulseActive = 5000; // 5sn Açık
-    const pulseWait = 2000;   // 2sn Kapalı
-    const cycleTime = pulseActive + pulseWait;
+    addWashLog(washType, totalDuration, 'TAMAMLANDI'); // Başlangıçta logla (iptal edilirse cancel route'u yakalıyor)
 
-    console.log(`[SÜREÇ] Darbeli CIP Yıkama Başlıyor (Hedef: ${totalDuration}ms)`);
+    let elapsed = 0;
+    const pulseActive = state.config.washPulseActiveMs || 5000;
+    const pulseWait   = state.config.washPulseWaitMs || 2000;
+    const cycleTime   = pulseActive + pulseWait;
+
+    console.log(`[SÜREÇ] Darbeli CIP Yıkama Başlıyor (Hedef: ${totalDuration}ms, Akış: ${pulseActive}ms, Bekleme: ${pulseWait}ms)`);
 
     const washInterval = setInterval(() => {
-      if (elapsed >= totalDuration || state.emergencyStop || !state.systemRunning && state.process.state !== 'WASHING') {
+      // Bitiş kontrolü
+      if (elapsed >= totalDuration || state.process.state === 'IDLE' || state.emergencyStop) {
         clearInterval(washInterval);
         state.process.state = 'IDLE';
-        console.log('[SÜREÇ] CIP Yıkama Bitti veya Durduruldu.');
+        state.process.washProgress = 0;
+        console.log('[SÜREÇ] CIP Yıkama Bitti veya İptal Edildi.');
         return;
       }
 
       if (state.paused) {
-        // Duraklatılmışsa bu darbeyi atla (elapsed artmaz)
+        // Duraklatılmışsa bu darbeyi atla
         return;
       }
 
       const fwCmd = `FILL_START:${washValves.map(v => `${v.pin}=${pulseActive}`).join(',')}`;
-      console.log(`[SÜREÇ] Yıkama Darbesi Gönderiliyor (${elapsed}/${totalDuration}ms)`);
+      console.log(`[SÜREÇ] Yıkama Darbesi Gönderiliyor (${Math.round(elapsed/1000)}s / ${Math.round(totalDuration/1000)}s)`);
       if (arduino.isConnected) arduino.sendCommand(fwCmd);
       
       elapsed += cycleTime;
     }, cycleTime);
 
+    // Progress counter (Her saniye)
+    const progressInterval = setInterval(() => {
+      if (state.process.state !== 'WASHING' || state.process.washProgress! <= 0) {
+        clearInterval(progressInterval);
+        return;
+      }
+      if (!state.paused) {
+        state.process.washProgress = (state.process.washProgress || 0) - 1;
+      }
+    }, 1000);
+
     // İlk tetikleme
-    const fwCmd = `FILL_START:${washValves.map(v => `${v.pin}=${pulseActive}`).join(',')}`;
-    if (arduino.isConnected) arduino.sendCommand(fwCmd);
+    const firstFwCmd = `FILL_START:${washValves.map(v => `${v.pin}=${pulseActive}`).join(',')}`;
+    if (arduino.isConnected) arduino.sendCommand(firstFwCmd);
     elapsed += cycleTime;
 
     res.json(state);
