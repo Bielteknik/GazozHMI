@@ -84,7 +84,12 @@ export async function initDb(): Promise<void> {
     { name: 'lastMaintenance', type: 'TEXT' },
     { name: 'specs',           type: 'TEXT' },
     { name: 'inverted',        type: 'INTEGER DEFAULT 0' },
-    { name: 'category',        type: 'TEXT' }
+    { name: 'category',        type: 'TEXT' },
+    { name: 'forwardSteps',    type: 'INTEGER' },
+    { name: 'backwardSteps',   type: 'INTEGER' },
+    { name: 'stepDelayUs',     type: 'INTEGER' },
+    { name: 'stepperAxis',     type: 'TEXT' },
+    { name: 'debounceMs',      type: 'INTEGER' }
   ];
 
   for (const col of columnsToAdd) {
@@ -197,17 +202,19 @@ export function getDevices(): Device[] {
 
 export function saveDevice(device: Device): void {
   db.run(`
-    INSERT OR REPLACE INTO devices 
     (id, name, type, role, target, pin, fillDurationMs, 
      manufacturer, model, serialNumber, description, installDate, 
-     lastMaintenance, specs, inverted, category)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     lastMaintenance, specs, inverted, category,
+     forwardSteps, backwardSteps, stepDelayUs, stepperAxis, debounceMs)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     device.id, device.name, device.type, device.role,
     device.target, device.pin, device.fillDurationMs || null,
     device.manufacturer || null, device.model || null, device.serialNumber || null,
     device.description || null, device.installDate || null, device.lastMaintenance || null,
-    device.specs || null, device.inverted ? 1 : 0, device.category || null
+    device.specs || null, device.inverted ? 1 : 0, device.category || null,
+    device.forwardSteps || null, device.backwardSteps || null, 
+    device.stepDelayUs || null, device.stepperAxis || null, device.debounceMs || null
   ]);
   persist();
 }

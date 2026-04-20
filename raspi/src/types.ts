@@ -9,6 +9,7 @@ export interface SystemState {
     bottlesInArea: number;
     targetBottles: number;
     currentCycleId?: number;
+    washProgress?: number; // Saniye bazında kalan süre
   };
   
   hardware: {
@@ -23,6 +24,8 @@ export interface SystemState {
     dailyQuota: number;
     dropDelayMs: number;
     conveyorSpeed: number;
+    washPulseActiveMs: number;
+    washPulseWaitMs: number;
   };
   
   devices: Device[]; // 100% dinamik donanımlar
@@ -75,6 +78,13 @@ export interface Device {
   target: ConnectionTarget;// Hangi karta bağlı?
   pin: string;             // Fiziksel bağlandı pini (Örn: GPIO4 veya D8)
   fillDurationMs?: number; // Sadece valfler için (ms cinsinden dolum süresi)
+  
+  // -- Stepper / Sensor Ayarları --
+  forwardSteps?: number;    // İleri (Kapatma) adım sayısı
+  backwardSteps?: number;   // Geri (Açma) adım sayısı
+  stepDelayUs?: number;     // Adım gecikmesi (hız) - mikro saniye
+  stepperAxis?: string;     // CNC Shield ekseni (X, Y, Z)
+  debounceMs?: number;      // Sensör filtreleme süresi
   
   // -- Envanter ve Teknik Detaylar --
   manufacturer?: string;    // Üretici / Marka

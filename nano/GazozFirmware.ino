@@ -15,6 +15,15 @@
 
 #define MAX_VALVES 20
 
+// CNC Shield v4 Pin Tanımları
+#define EN_PIN 8
+#define X_STEP 5
+#define X_DIR  2
+#define Y_STEP 3
+#define Y_DIR  6
+#define Z_STEP 4
+#define Z_DIR  7
+
 struct ValveTimer {
   int pin;
   unsigned long duration;
@@ -41,8 +50,16 @@ void setup() {
   Serial.begin(115200);
   while (!Serial) {;}
   
-  // Tüm olası pinleri başlangıçta INPUT yapıp güvene alalım
+  // Standart pinleri başlangıçta INPUT yapıp güvene alalım
   for (int i = 2; i <= 13; i++) pinMode(i, INPUT_PULLUP);
+  
+  // CNC Shield Pinlerini yapılandır
+  pinMode(EN_PIN, OUTPUT);
+  digitalWrite(EN_PIN, HIGH); // Başlangıçta pasif (Sleep)
+  
+  pinMode(X_STEP, OUTPUT); pinMode(X_DIR, OUTPUT);
+  pinMode(Y_STEP, OUTPUT); pinMode(Y_DIR, OUTPUT);
+  pinMode(Z_STEP, OUTPUT); pinMode(Z_DIR, OUTPUT);
   
   Serial.println("READY");
 }
@@ -90,7 +107,7 @@ void loop() {
           activeValves[activeValveCount].startTime = millis();
           activeValves[activeValveCount].active = true;
           
-          // Valfi aç (Röle ters mantık çalışıyorsa LOW yapılacak, burada Düz mantık: HIGH açar kabul edildi)
+          // Valfi aç
           digitalWrite(pin, HIGH);
           
           activeValveCount++;
@@ -98,6 +115,43 @@ void loop() {
         startIdx = commaIdx + 1;
       }
       Serial.println("OK:FILL_STARTED");
+    }
+    else if (cmd.startsWith("MV:")) {
+      // Örn: MV:X:F:600:800 (Eksen:Yön:Adım:GecikmeUS)
+      int c1 = cmd.indexOf(':');
+      int c2 = cmd.indexOf(':', c1 + 1);
+      int c3 = cmd.indexOf(':', c2 + 1);
+      int c4 = cmd.indexOf(':', c3 + 1);
+      
+      if (c1 > 0 && c2 > 0 && c3 > 0 && c4 > 0) {
+        char axis = cmd.substring(c1 + 1, c2).charAt(0);
+        char dirChar = cmd.substring(c2 + 1, c3).charAt(0);
+        long steps = cmd.substring(c3 + 1, c4).toInt();
+        int delayUs = cmd.substring(c4 + 1).toInt();
+        
+        int sPin = -1, dPin = -1;
+        if (axis == 'X') { sPin = X_STEP; dPin = X_DIR; }
+        else if (axis == 'Y') { sPin = Y_STEP; dPin = Y_DIR; }
+        else if (axis == 'Z') { sPin = Z_STEP; dPin = Z_DIR; }
+        
+        if (sPin != -1) {
+          digitalWrite(EN_PIN, LOW); // Sürücüyü aktif et
+          digitalWrite(dPin, (dirChar == 'F' || dirChar == 'f') ? HIGH : LOW);
+          
+          for (long i = 0; i < steps; i++) {
+            digitalWrite(sPin, HIGH);
+            delayMicroseconds(delayUs);
+            digitalWrite(sPin, LOW);
+            delayMicroseconds(delayUs);
+          }
+          
+          // Hareket bitti, sürücüyü uyut (Isınmayı engeller)
+          digitalWrite(EN_PIN, HIGH);
+          Serial.println("OK:MOVE_DONE");
+        } else {
+          Serial.println("ERR:INVALID_AXIS");
+        }
+      }
     }
     else if (cmd.startsWith("OPEN:")) {
       int pin = parsePin(cmd.substring(5));
@@ -112,6 +166,7 @@ void loop() {
     else if (cmd == "ESTOP") {
       // Tüm olası çıkışları sıfırla
       for(int i=2; i<=13; i++) digitalWrite(i, LOW);
+      digitalWrite(EN_PIN, HIGH); // Step motorları durdur/kapat
       isFilling = false;
       activeValveCount = 0;
       Serial.println("OK:ESTOP_ACTIVATED");

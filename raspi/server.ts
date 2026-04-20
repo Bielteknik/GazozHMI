@@ -53,7 +53,6 @@ const state: SystemState = {
     dropDelayMs: 500,      // Default 500ms damla bekleme süresi
     conveyorSpeed: 80,     // Default %80 Hız
   },
-  paused: false,
   devices: [], // startServer içinde yüklenecek
   rawLogs: [],
   notifications: []
@@ -108,7 +107,7 @@ setInterval(scanPortsAndNotify, 4000);
 const LOG_DIR = path.join(__dirname, 'logs');
 if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });
 
-function logComm(direction: 'IN' | 'OUT' | 'INTERNAL', source: 'RPI' | 'NANO' | 'SENSOR' | 'SYSTEM', msg: string, level: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' = 'INFO') {
+function logComm(direction: 'IN' | 'OUT' | 'INTERNAL', source: 'RPI' | 'NANO' | 'SENSOR' | 'SYSTEM' | 'SANDBOX', msg: string, level: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' = 'INFO') {
   const logEntry = {
     id: Math.random().toString(36).substr(2, 9),
     timestamp: new Date().toISOString(),
@@ -142,7 +141,7 @@ function setupGpioWatchers() {
     try { gpio.unexport(); } catch(e){}
   });
 
-  if (!GpioClient) return;
+  const lastTriggers: Record<string, number> = {};
 
   for (const dev of state.devices) {
     if (dev.target === 'raspi' && (dev.role === 'entry_laser' || dev.role === 'exit_laser')) {
@@ -155,30 +154,38 @@ function setupGpioWatchers() {
           if (err) return;
           if (!state.systemRunning) return;
 
-            if (dev.role === 'entry_laser' && state.process.state === 'WAITING_ENTRY') {
-              logComm('IN', 'SENSOR', `Giriş Lazeri Tetiklendi. Sayım: ${dev.count + 1}`, 'DEBUG');
-              dev.count = (dev.count || 0) + 1;
-              dev.active = true; setTimeout(() => { dev.active = false; }, 200);
-              state.process.bottlesInArea = dev.count;
+          // Software Debounce
+          const now = Date.now();
+          const debounceLimit = dev.debounceMs || 100; // Varsayılan 100ms
+          if (lastTriggers[dev.id] && (now - lastTriggers[dev.id] < debounceLimit)) {
+             return; // Titreşimi engelle
+          }
+          lastTriggers[dev.id] = now;
 
-              if (state.process.bottlesInArea >= state.process.targetBottles) {
-                dev.count = 0; // Sıfırla
-                startAutonomousFilling();
-              }
-            } 
-            else if (dev.role === 'exit_laser' && state.process.state === 'WAITING_EXIT') {
-              logComm('IN', 'SENSOR', `Çıkış Lazeri Tetiklendi. Sayım: ${dev.count + 1}`, 'DEBUG');
-              dev.count = (dev.count || 0) + 1;
-              dev.active = true; setTimeout(() => { dev.active = false; }, 200);
-              
-              if (dev.count >= state.process.targetBottles) {
-                dev.count = 0;
-                finishCycle();
-              }
+          if (dev.role === 'entry_laser' && state.process.state === 'WAITING_ENTRY') {
+            logComm('IN', 'SENSOR', `Giriş Lazeri Tetiklendi. Sayım: ${dev.count + 1}`, 'DEBUG');
+            dev.count = (dev.count || 0) + 1;
+            dev.active = true; setTimeout(() => { dev.active = false; }, 200);
+            state.process.bottlesInArea = dev.count;
+
+            if (state.process.bottlesInArea >= state.process.targetBottles) {
+              dev.count = 0; // Sıfırla
+              startAutonomousFilling();
             }
-          });
-          logComm('INTERNAL', 'SYSTEM', `GPIO Sensörü ${dev.name} pine bağlandı: ${pinNum}`, 'INFO');
-          console.log(`[GPIO] Raspi sensörü ${dev.name} pine bağlandı: ${pinNum}`);
+          } 
+          else if (dev.role === 'exit_laser' && state.process.state === 'WAITING_EXIT') {
+            logComm('IN', 'SENSOR', `Çıkış Lazeri Tetiklendi. Sayım: ${dev.count + 1}`, 'DEBUG');
+            dev.count = (dev.count || 0) + 1;
+            dev.active = true; setTimeout(() => { dev.active = false; }, 200);
+            
+            if (dev.count >= state.process.targetBottles) {
+              dev.count = 0;
+              finishCycle();
+            }
+          }
+        });
+        logComm('INTERNAL', 'SYSTEM', `GPIO Sensörü ${dev.name} pine bağlandı: ${pinNum} (Debounce: ${dev.debounceMs || 100}ms)`, 'INFO');
+        console.log(`[GPIO] Raspi sensörü ${dev.name} pine bağlandı: ${pinNum}`);
       } catch (e: any) {
         console.error(`[GPIO] Cihaz bağlanamadı: ${dev.name}`, e.message);
       }
@@ -193,30 +200,62 @@ function findDeviceByRole(role: string): Device | undefined {
 
 function openEntryGate() {
   const gate = findDeviceByRole('entry_lock');
-  if (gate && gate.target === 'nano') {
+  if (!gate || gate.target !== 'nano') return;
+
+  if (gate.stepperAxis) {
+    const axis = gate.stepperAxis;
+    const steps = gate.backwardSteps || 600;
+    const delay = gate.stepDelayUs || 800;
+    arduino.sendCommand(`MV:${axis}:B:${steps}:${delay}`);
+  } else {
     arduino.sendCommand(`OPEN:${gate.pin}`);
   }
+  gate.active = false; // Yazılımsal olarak AÇIK işaretle
 }
 
 function closeEntryGate() {
   const gate = findDeviceByRole('entry_lock');
-  if (gate && gate.target === 'nano') {
+  if (!gate || gate.target !== 'nano') return;
+
+  if (gate.stepperAxis) {
+    const axis = gate.stepperAxis;
+    const steps = gate.forwardSteps || 600;
+    const delay = gate.stepDelayUs || 800;
+    arduino.sendCommand(`MV:${axis}:F:${steps}:${delay}`);
+  } else {
     arduino.sendCommand(`CLOSE:${gate.pin}`);
   }
+  gate.active = true; // Yazılımsal olarak KAPALI işaretle
 }
 
 function openExitGate() {
   const gate = findDeviceByRole('exit_lock');
-  if (gate && gate.target === 'nano') {
+  if (!gate || gate.target !== 'nano') return;
+
+  if (gate.stepperAxis) {
+    const axis = gate.stepperAxis;
+    const steps = gate.backwardSteps || 600;
+    const delay = gate.stepDelayUs || 800;
+    arduino.sendCommand(`MV:${axis}:B:${steps}:${delay}`);
+  } else {
     arduino.sendCommand(`OPEN:${gate.pin}`);
   }
+  gate.active = false;
 }
 
 function closeExitGate() {
   const gate = findDeviceByRole('exit_lock');
-  if (gate && gate.target === 'nano') {
+  if (!gate || gate.target !== 'nano') return;
+
+  if (gate.stepperAxis) {
+    const axis = gate.stepperAxis;
+    const steps = gate.forwardSteps || 600;
+    const delay = gate.stepDelayUs || 800;
+    arduino.sendCommand(`MV:${axis}:F:${steps}:${delay}`);
+  } else {
     arduino.sendCommand(`CLOSE:${gate.pin}`);
   }
+  gate.active = true;
 }
 
 function startAutonomousFilling() {

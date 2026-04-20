@@ -327,7 +327,9 @@ function ConsoleView({ state }: { state: SystemState }) {
                   <span className={`text-[10px] font-black tracking-wider w-4 ${typeColor}`}>{dev.type === 'valve' ? 'V' : dev.type === 'laser_sensor' ? 'L' : 'M'}</span>
                   <span className="text-[11px] font-bold text-slate-800 flex-1 truncate">{dev.name}</span>
                   <span className="text-[9px] font-bold text-slate-500 shrink-0 uppercase">{dev.target === 'nano' ? 'PLC Driver' : dev.target}/{dev.pin}</span>
-                  <span className={`text-[10px] font-black w-8 text-right shrink-0 ${dev.active ? 'text-emerald-700' : 'text-slate-500'}`}>{dev.active ? 'ON' : 'OFF'}</span>
+                  <span className={`text-[10px] font-black w-12 text-right shrink-0 ${dev.active ? 'text-emerald-700' : 'text-slate-500'}`}>
+                    {dev.type === 'motor' || dev.role.includes('lock') ? (dev.active ? 'KAPALI' : 'AÇIK') : (dev.active ? 'ON' : 'OFF')}
+                  </span>
                 </div>
               );
             })}
@@ -353,7 +355,9 @@ function ConsoleView({ state }: { state: SystemState }) {
                 return (
                   <div key={k} className={`border rounded-md px-2 py-2 flex flex-col items-center justify-center transition-colors ${on ? activeColor : 'border-slate-300 bg-slate-100/80 text-slate-500'}`}>
                     <span className="text-[8px] font-black tracking-wider uppercase mb-1 text-center leading-tight">{k}</span>
-                    <span className={`text-[11px] font-black ${on ? '' : 'text-slate-400'}`}>{on ? 'ON' : 'OFF'}</span>
+                    <span className={`text-[11px] font-black ${on ? '' : 'text-slate-400'}`}>
+                      {k.includes('KİLİT') ? (on ? 'KAPALI' : 'AÇIK') : (on ? 'ON' : 'OFF')}
+                    </span>
                   </div>
                 );
               })}
@@ -449,18 +453,23 @@ function HardwareList({ state }: { state: SystemState }) {
 // ─── SETTINGS VIEW ──────────────────────────────────
 
 function SettingsView({ state, apiCall }: { state: SystemState; apiCall: any }) {
-  const [activeSub, setActiveSub] = useState<'inventory' | 'process'>('inventory');
+  const [activeSub, setActiveSub] = useState<'inventory' | 'process' | 'lock' | 'counter'>('inventory');
 
   return (
     <div className="h-full flex flex-col bg-slate-50">
       <div className="flex px-8 border-b border-slate-200 shrink-0 bg-white shadow-[0_4px_20px_-10px_rgba(0,0,0,0.05)] relative z-10 w-full pt-2">
         <MainTabButton active={activeSub === 'inventory'} onClick={() => setActiveSub('inventory')} label="DONANIM ENVANTERİ" />
-        <MainTabButton active={activeSub === 'process'}   onClick={() => setActiveSub('process')}   label="ÜRETİM PARAMETRELERİ" />
+        <MainTabButton active={activeSub === 'process'}   onClick={() => setActiveSub('process')}   label="SİSTEM PARAMETRELERİ" />
+        <MainTabButton active={activeSub === 'lock'}      onClick={() => setActiveSub('lock')}      label="KİLİT AYAR" />
+        <MainTabButton active={activeSub === 'counter'}   onClick={() => setActiveSub('counter')}   label="SAYAÇ AYAR" />
       </div>
 
       <div className="flex-1 overflow-y-auto p-6 md:p-8">
         <div className="mx-auto" style={{ maxWidth: '1000px' }}>
-          {activeSub === 'inventory' ? <HardwareInventoryView state={state} apiCall={apiCall} /> : <ProcessSettingsView state={state} apiCall={apiCall} />}
+          {activeSub === 'inventory' && <HardwareInventoryView state={state} apiCall={apiCall} />}
+          {activeSub === 'process'   && <ProcessSettingsView  state={state} apiCall={apiCall} />}
+          {activeSub === 'lock'      && <LockSettingsView     state={state} apiCall={apiCall} />}
+          {activeSub === 'counter'   && <CounterSettingsView  state={state} apiCall={apiCall} />}
         </div>
       </div>
     </div>
@@ -1069,3 +1078,165 @@ function NotificationToast({ notification }: { notification: SystemNotification;
   );
 }
 
+// ─── LOCK SETTINGS VIEW ──────────────────────────────────────
+
+function LockSettingsView({ state, apiCall }: { state: SystemState; apiCall: any }) {
+  const locks = state.devices.filter(d => d.role === 'entry_lock' || d.role === 'exit_lock');
+
+  return (
+    <div className="flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+      <div className="bg-amber-50 border border-amber-200 p-6 rounded-lg flex gap-4 items-start shadow-sm">
+        <Lock className="w-6 h-6 text-amber-600 shrink-0 mt-1" />
+        <div className="flex flex-col">
+          <span className="text-sm font-black text-amber-900 tracking-tight">YAZILIMSAL KİLİT KONTROLÜ</span>
+          <p className="text-xs text-amber-700/80 mt-1 leading-relaxed font-bold">
+            Bu ekranda step motorlu kilitlerin (Giriş/Çıkış) mesafe ve hız ayarlarını yapabilirsiniz. 
+            Limit switch bulunmadığı için hareket tamamen adım sayıları üzerinden kontrol edilmektedir.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4">
+        {locks.map(lock => (
+          <div key={lock.id} className="bg-white border border-slate-200 p-6 rounded-lg shadow-sm flex flex-col gap-6">
+            <div className="flex items-center justify-between border-b border-slate-50 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-slate-100 rounded-lg text-slate-500"><Microchip className="w-5 h-5" /></div>
+                <div className="flex flex-col">
+                  <span className="text-sm font-black text-slate-800 uppercase tracking-tight">{lock.name}</span>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{lock.role} ({lock.pin})</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-4 bg-slate-50 px-4 py-2 rounded-lg border border-slate-100">
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">EKSEN:</span>
+                <select 
+                  className="bg-transparent text-xs font-black text-blue-600 outline-none"
+                  value={lock.stepperAxis || 'X'}
+                  onChange={e => apiCall('/api/devices', { device: { ...lock, stepperAxis: e.target.value } })}
+                >
+                  <option value="X">X EKSENİ (D2/D5)</option>
+                  <option value="Y">Y EKSENİ (D3/D6)</option>
+                  <option value="Z">Z EKSENİ (D4/D7)</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+               <div className="flex flex-col gap-2">
+                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">KAPATMA ADIMI (İLERİ)</label>
+                 <div className="flex items-center bg-slate-50 border border-slate-200 rounded-lg px-4 focus-within:border-blue-400 transition-colors">
+                   <input 
+                     type="number" 
+                     className="w-full h-11 bg-transparent font-mono font-black text-lg text-slate-700 outline-none"
+                     value={lock.forwardSteps || 600}
+                     onChange={e => apiCall('/api/devices', { device: { ...lock, forwardSteps: parseInt(e.target.value)||0 } })}
+                   />
+                   <span className="text-[10px] font-black text-slate-400 uppercase ml-2 italic">STEP</span>
+                 </div>
+               </div>
+               <div className="flex flex-col gap-2">
+                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">AÇILMA ADIMI (GERİ)</label>
+                 <div className="flex items-center bg-slate-50 border border-slate-200 rounded-lg px-4 focus-within:border-blue-400 transition-colors">
+                   <input 
+                     type="number" 
+                     className="w-full h-11 bg-transparent font-mono font-black text-lg text-slate-700 outline-none"
+                     value={lock.backwardSteps || 600}
+                     onChange={e => apiCall('/api/devices', { device: { ...lock, backwardSteps: parseInt(e.target.value)||0 } })}
+                   />
+                   <span className="text-[10px] font-black text-slate-400 uppercase ml-2 italic">STEP</span>
+                 </div>
+               </div>
+               <div className="flex flex-col gap-2">
+                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">PULS GECİKMESİ (HIZ)</label>
+                 <div className="flex items-center bg-slate-50 border border-slate-200 rounded-lg px-4 focus-within:border-blue-400 transition-colors">
+                   <input 
+                     type="number" 
+                     className="w-full h-11 bg-transparent font-mono font-black text-lg text-slate-700 outline-none"
+                     value={lock.stepDelayUs || 800}
+                     onChange={e => apiCall('/api/devices', { device: { ...lock, stepDelayUs: parseInt(e.target.value)||0 } })}
+                   />
+                   <span className="text-[10px] font-black text-blue-500 uppercase ml-2 italic">US</span>
+                 </div>
+               </div>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-2">
+               <button onClick={() => apiCall(`/api/terminal`, { target: 'nano', command: `MV:${lock.stepperAxis||'X'}:B:${lock.backwardSteps||600}:${lock.stepDelayUs||800}` })} className="px-5 h-10 bg-white border border-slate-200 text-[11px] font-black text-slate-600 rounded-lg hover:bg-slate-50 transition-all flex items-center gap-2 uppercase tracking-tighter shadow-sm"><Unlock className="w-3.5 h-3.5"/> KİLİDİ AÇ (TEST)</button>
+               <button onClick={() => apiCall(`/api/terminal`, { target: 'nano', command: `MV:${lock.stepperAxis||'X'}:F:${lock.forwardSteps||600}:${lock.stepDelayUs||800}` })} className="px-5 h-10 bg-slate-800 text-white text-[11px] font-black rounded-lg hover:bg-slate-900 transition-all flex items-center gap-2 uppercase tracking-tighter shadow-lg shadow-slate-200"><Lock className="w-3.5 h-3.5"/> KİLİDİ KAPAT (TEST)</button>
+            </div>
+          </div>
+        ))}
+        {locks.length === 0 && <div className="p-12 text-center text-slate-400 font-bold uppercase tracking-widest bg-white border border-dashed border-slate-300 rounded-lg">Tanımlı kilit cihazı bulunamadı.</div>}
+      </div>
+    </div>
+  );
+}
+
+// ─── COUNTER SETTINGS VIEW ──────────────────────────────────────
+
+function CounterSettingsView({ state, apiCall }: { state: SystemState; apiCall: any }) {
+  const sensors = state.devices.filter(d => d.type === 'laser_sensor');
+
+  return (
+    <div className="flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+      <div className="bg-indigo-50 border border-indigo-200 p-6 rounded-lg flex gap-4 items-start shadow-sm">
+        <ScanLine className="w-6 h-6 text-indigo-600 shrink-0 mt-1" />
+        <div className="flex flex-col">
+          <span className="text-sm font-black text-indigo-900 tracking-tight">SENSÖR VE SAYIM AYARLARI</span>
+          <p className="text-xs text-indigo-700/80 mt-1 leading-relaxed font-bold">
+            Optik sensörlerin sayım hassasiyetini düzenleyebilir, titreşim kaynaklı hatalı sayımları engellemek için filtre süresini (Debounce) ayarlayabilirsiniz.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {sensors.map(sensor => (
+          <div key={sensor.id} className="bg-white border border-slate-200 p-6 rounded-lg shadow-sm flex flex-col gap-6">
+            <div className="flex items-center justify-between border-b border-slate-50 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-slate-100 rounded-lg text-slate-500"><ScanLine className="w-5 h-5" /></div>
+                <div className="flex flex-col">
+                  <span className="text-sm font-black text-slate-800 uppercase tracking-tight">{sensor.name}</span>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PIN: {sensor.pin}</span>
+                </div>
+              </div>
+              <div className={`w-3 h-3 rounded-full ${sensor.active ? 'bg-emerald-500 animate-pulse' : 'bg-slate-100'}`} />
+            </div>
+
+            <div className="flex flex-col gap-6">
+               <div className="flex flex-col gap-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">MEVCUT SAYIM DEĞERİ</label>
+                  <div className="flex gap-2">
+                    <div className="flex-1 flex items-center bg-slate-50 border border-slate-200 rounded-lg px-4">
+                      <input 
+                        type="number" 
+                        className="w-full h-11 bg-transparent font-mono font-black text-2xl text-indigo-600 outline-none"
+                        value={sensor.count || 0}
+                        onChange={e => apiCall('/api/devices', { device: { ...sensor, count: parseInt(e.target.value)||0 } })}
+                      />
+                    </div>
+                    <button onClick={() => apiCall('/api/devices', { device: { ...sensor, count: 0 } })} className="h-11 px-4 bg-slate-100 text-slate-500 hover:bg-rose-50 hover:text-rose-600 transition-colors rounded-lg"><RefreshCw className="w-4 h-4"/></button>
+                  </div>
+               </div>
+
+               <div className="flex flex-col gap-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">YAZILIMSAL FİLTRE (DEBOUNCE)</label>
+                  <div className="flex items-center bg-slate-50 border border-slate-200 rounded-lg px-4 focus-within:border-indigo-400 transition-colors">
+                    <input 
+                      type="number" 
+                      className="w-full h-11 bg-transparent font-mono font-black text-lg text-slate-700 outline-none"
+                      value={sensor.debounceMs || 100}
+                      onChange={e => apiCall('/api/devices', { device: { ...sensor, debounceMs: parseInt(e.target.value)||0 } })}
+                    />
+                    <span className="text-[10px] font-black text-slate-400 uppercase ml-2 italic">MS</span>
+                  </div>
+                  <span className="text-[9px] font-bold text-slate-400">Bu süre içindeki mükerrer sinyaller sayılmaz.</span>
+               </div>
+            </div>
+          </div>
+        ))}
+        {sensors.length === 0 && <div className="col-span-2 p-12 text-center text-slate-400 font-bold uppercase tracking-widest bg-white border border-dashed border-slate-300 rounded-lg">Tanımlı sensör bulunamadı.</div>}
+      </div>
+    </div>
+  );
+}

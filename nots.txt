@@ -1,0 +1,4 @@
+1 - Bu sistemde kilit olarak kullandığım step motora f600 komutu gönderdiğimde eğer kilit açık ise 600 adım ileri yönde dönerek 
+kilidi kapalı konuma kadar getirsin. kapalı konumda ise b600 komutu gönderdiğimde 600 adım geri yönde dönüp kilidi açık pozisyonuna alsın.
+
+2 - 
